@@ -42,8 +42,7 @@ IS_ACTIVE = True
 # --- Подключение к БД ---
 def get_db_connection():
     if not MY_DATABASE_URL:
-        # запасной вариант (лучше убрать пароль из кода и держать в .env)
-        return psycopg2.connect("postgresql://bot_user:12345@localhost/bot_db")
+        raise RuntimeError("MY_DATABASE_URL is not set (check .env or systemd Environment=)")
     return psycopg2.connect(MY_DATABASE_URL)
 
 
