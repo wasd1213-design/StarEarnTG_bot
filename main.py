@@ -687,6 +687,12 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if parsed_data.get("action") != "spin_result":
             return
 
+        # антидубликаты: уникальный id спина (присылается из WebApp)
+        spin_id = parsed_data.get("spin_id")
+        if not spin_id:
+            await update.effective_message.reply_text("❌ Ошибка: нет spin_id. Обновите колесо и попробуйте снова.")
+            return
+
         prize_code = parsed_data.get("prize")
 
         prize_to_tickets = {
@@ -706,20 +712,28 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             prize_text = "❌ Неизвестный приз. Обновите колесо и попробуйте снова."
 
-        if not prize_text:
-            prize_text = "✅ Результат получен."
-
         with get_db_connection() as conn:
             with conn.cursor() as cur:
+                # 1) фиксируем spin_id; если уже был — это повторная отправка, просто игнорируем
+                cur.execute(
+                    """
+                    INSERT INTO fortune_spins (spin_id, user_id, prize_code, created_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (spin_id) DO NOTHING
+                    """,
+                    (spin_id, user_id, str(prize_code), now),
+                )
+                if cur.rowcount == 0:
+                    return
+
+                # 2) проверяем кулдаун
                 cur.execute("SELECT last_fortune_time FROM users WHERE user_id=%s", (user_id,))
                 row = cur.fetchone()
                 last_spin_time = row[0] if row else None
 
                 # ВАЖНО: не делаем last_spin_time timezone-aware.
-                # Просто приводим к naive (чтобы now - last_spin_time работало всегда).
                 last_spin_time = to_naive_utc(last_spin_time)
 
-                # кулдаун 6 часов
                 if last_spin_time:
                     delta = now - last_spin_time
                     if delta < timedelta(hours=6):
@@ -732,7 +746,7 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         )
                         return
 
-                # начисление / фиксация времени
+                # 3) начисление / фиксация времени
                 if add_tickets > 0:
                     cur.execute(
                         """
