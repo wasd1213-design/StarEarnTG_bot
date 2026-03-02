@@ -47,7 +47,15 @@ def get_db_connection():
     return psycopg2.connect(MY_DATABASE_URL)
 
 
+def to_naive_utc(dt):
+    """Привести datetime к UTC-naive (под timestamp without time zone в Postgres)."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=None)
+
+
 def utcnow():
+    # ЕДИНЫЙ стандарт времени во всём проекте: UTC-naive
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
@@ -162,7 +170,6 @@ def init_db():
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
-                # referrals
                 cursor.execute(
                     """
                     CREATE TABLE IF NOT EXISTS referrals (
@@ -173,7 +180,6 @@ def init_db():
                     """
                 )
 
-                # winners
                 cursor.execute(
                     """
                     CREATE TABLE IF NOT EXISTS winners (
@@ -186,7 +192,6 @@ def init_db():
                     """
                 )
 
-                # channel subscriptions
                 cursor.execute(
                     """
                     CREATE TABLE IF NOT EXISTS channel_subscriptions (
@@ -210,8 +215,8 @@ async def get_start_text(user_id, first_name, context):
     season_id, season_start, season_end = get_active_season()
     ensure_user_season(user_id, season_id)
 
-    # таймер
     now = utcnow()
+    season_end = to_naive_utc(season_end)  # страховка от aware
     left = season_end - now
     if left.total_seconds() < 0:
         left = timedelta(seconds=0)
@@ -219,7 +224,6 @@ async def get_start_text(user_id, first_name, context):
     hours = left.seconds // 3600
     minutes = (left.seconds % 3600) // 60
 
-    # статус активации + билеты
     activated = False
     season_ref_tickets = 0
     season_bonus_tickets = 0
@@ -243,7 +247,6 @@ async def get_start_text(user_id, first_name, context):
     except Exception as e:
         print("read user flags error:", e)
 
-    # Проверка подписок + сохранение факта подписки в channel_subscriptions
     channels_list = ""
     for i, ch in enumerate(SPONSORS, 1):
         is_sub = await check_subscription(user_id, ch, context)
@@ -269,7 +272,6 @@ async def get_start_text(user_id, first_name, context):
 
         channels_list += f"{i}. {ch} {icon}\n"
 
-    # Обновляем общий статус подписки в users
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
@@ -320,9 +322,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = user.id
     first_name = user.first_name
-    username = user.username  # может быть None
+    username = user.username
 
-    # 1) Регистрация/обновление username
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
@@ -339,7 +340,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Ошибка регистрации: {e}")
 
-    # 2) Привязка сезона + last_seen
     season_id, season_start, season_end = get_active_season()
     ensure_user_season(uid, season_id)
     try:
@@ -350,7 +350,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("last_seen update error:", e)
 
-    # 3) Рефералка: 2 реферала один раз => activated, после активации реф-билеты до 10/сезон
     if context.args:
         ref_str = context.args[0]
         if ref_str.isdigit() and int(ref_str) != uid:
@@ -364,7 +363,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
 
                         if cur.rowcount > 0:
-                            # +1 к пожизненным рефералам
                             cur.execute(
                                 """
                                 UPDATE users
@@ -377,13 +375,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             row = cur.fetchone()
                             if row:
                                 lr, activated = row
-
-                                # если набрал 2 — активируем
                                 if (not activated) and lr >= 2:
                                     cur.execute("UPDATE users SET activated=TRUE WHERE user_id=%s", (referrer,))
                                     activated = True
 
-                                # начисляем билет за реферала в этом сезоне (только если активирован и лимит < 10)
                                 if activated:
                                     ensure_user_season(referrer, season_id)
 
@@ -412,13 +407,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"Ошибка рефералки: {e}")
 
-    # 🎡 Кнопка мини-приложения (внизу клавиатуры)
     await update.message.reply_text(
         "Открой мини-приложение 'Колесо фортуны' кнопкой ниже:",
         reply_markup=get_fortune_shortcut(uid),
     )
 
-    # 📋 Основное меню
     text = await get_start_text(uid, first_name, context)
     kb = [
         [InlineKeyboardButton("🔄 Проверить подписку", callback_data="check_sub")],
@@ -470,8 +463,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "my_tickets":
         await query.answer()
-
-        # обновим подписку/меню (это обновит all_subscribed)
         await get_start_text(uid, query.from_user.first_name, context)
 
         tickets = get_tickets(uid)
@@ -528,7 +519,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             with get_db_connection() as conn:
                 with conn.cursor() as cur:
-                    # лидерборд по билетам сезона
                     cur.execute(
                         """
                         SELECT username, tickets
@@ -575,8 +565,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
         await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
-# --- АДМИНКА ---
 
+# --- АДМИНКА ---
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMINS:
         return
@@ -619,11 +609,13 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cur.execute("SELECT COUNT(*) FROM users")
                 total_users = cur.fetchone()[0]
 
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT COUNT(*)
                     FROM users
                     WHERE tickets > 0 AND all_subscribed = 1
-                """)
+                    """
+                )
                 active_participants = cur.fetchone()[0]
 
                 cur.execute("SELECT COALESCE(SUM(tickets),0) FROM users")
@@ -667,7 +659,8 @@ async def reset_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     UPDATE users
                     SET
                       tickets = 0,
@@ -675,13 +668,15 @@ async def reset_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       season_bonus_tickets = 0,
                       last_fortune_time = NULL,
                       season_id = NULL
-                """)
+                    """
+                )
                 conn.commit()
         await update.message.reply_text("✅ <b>Сезон сброшен!</b>", parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
-# --- Колесо фортуны: обработка данных WebApp (БЕЗ сезонов) ---
+
+# --- Колесо фортуны: обработка данных WebApp ---
 async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     now = utcnow()
@@ -712,7 +707,6 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             prize_text = "❌ Неизвестный приз. Обновите колесо и попробуйте снова."
 
-        # защита от пустого текста
         if not prize_text:
             prize_text = "✅ Результат получен."
 
@@ -722,9 +716,9 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 row = cur.fetchone()
                 last_spin_time = row[0] if row else None
 
-                # timezone-fix на всякий случай
-                if last_spin_time and last_spin_time.tzinfo is None:
-                    last_spin_time = last_spin_time.replace(tzinfo=timezone.utc)
+                # ВАЖНО: не делаем last_spin_time timezone-aware.
+                # Просто приводим к naive (чтобы now - last_spin_time работало всегда).
+                last_spin_time = to_naive_utc(last_spin_time)
 
                 # кулдаун 6 часов
                 if last_spin_time:
@@ -735,7 +729,7 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         m_left = (seconds_left % 3600) // 60
                         await update.effective_message.reply_text(
                             f"⏳ Колесо заряжается! Ждите {h_left}ч {m_left}м.",
-                            parse_mode=ParseMode.HTML
+                            parse_mode=ParseMode.HTML,
                         )
                         return
 
@@ -749,7 +743,7 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
                             last_fortune_time = %s
                         WHERE user_id = %s
                         """,
-                        (add_tickets, add_tickets, now, user_id)
+                        (add_tickets, add_tickets, now, user_id),
                     )
                 else:
                     cur.execute(
@@ -758,7 +752,7 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         SET last_fortune_time = %s
                         WHERE user_id = %s
                         """,
-                        (now, user_id)
+                        (now, user_id),
                     )
 
                 conn.commit()
@@ -770,21 +764,23 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
         import traceback
         print("Ошибка WebApp:", e)
         print(traceback.format_exc())
-        
+
+
 # --- DRAW (2 победителя) ---
 async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMINS:
         return
 
     try:
-        # участники: подписан + tickets>0
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT user_id, username, tickets
                     FROM users
                     WHERE tickets > 0 AND all_subscribed = 1
-                """)
+                    """
+                )
                 rows = cur.fetchall()
 
         if len(rows) < 2:
@@ -793,7 +789,6 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # лотерея по билетам (пока простой способ)
         pool = []
         for r in rows:
             pool.extend([r] * int(r[2]))
@@ -811,7 +806,6 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         winners = [winner1, winner2]
 
-        # сохранить победителей
         try:
             with get_db_connection() as conn:
                 with conn.cursor() as cur:
@@ -824,7 +818,6 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Ошибка сохранения победителей: {e}")
 
-        # сообщение админу
         result_msg = "🎉 <b>ПОБЕДИТЕЛИ РОЗЫГРЫША:</b>\n\n"
         for i, (wid, wname, wtickets) in enumerate(winners, 1):
             safe = f"@{wname}" if wname else "Нет ника"
@@ -832,7 +825,6 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(result_msg, parse_mode=ParseMode.HTML)
 
-        # сообщение победителям
         win_msg = (
             f"🎉 <b>ПОЗДРАВЛЯЕМ! ВЫ ВЫИГРАЛИ!</b>\n\n"
             f"Приз: <b>{PRIZE}</b>\n\n"
@@ -858,7 +850,6 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def fortune(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # просто команда, которая показывает кнопку WebApp
     await update.message.reply_text(
         "Жми на кнопку ниже и лови призы!",
         reply_markup=get_fortune_shortcut(update.effective_user.id),
@@ -889,4 +880,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
