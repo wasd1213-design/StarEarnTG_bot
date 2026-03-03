@@ -38,6 +38,61 @@ BOT_USERNAME_FOR_REFLINK = "moy_giveaway_bot"
 
 IS_ACTIVE = True
 
+# --- FAQ ТЕКСТ ---
+FAQ_TEXT = """
+📚 <b>ЧАСТО ЗАДАВАЕМЫЕ ВОПРОСЫ</b>
+
+🎡 <b>Колесо фортуны:</b>
+• Крутите бесплатно раз в 6 часов
+• Или испытайте удачу за 1 билет (не дожидаясь окончания времени!)
+• Выигрыш: +1, +2, +3, +4 или +5 билетов
+• Билеты с колеса НЕ входят в лимит реферальных (сверх 10)
+
+🎯 <b>Как открыть Колесо фортуны?</b>
+1️⃣ Нажмите кнопку «Меню» (квадрат 2×2) внизу экрана
+2️⃣ Выберите «🎡 Колесо фортуны»
+3️⃣ Откроется мини-приложение — крутите!
+
+📋 <b>Как получить билеты?</b>
+• Пригласите 2 друзей для активации аккаунта
+• За каждого нового друга: +1 билет (макс. 10 за сезон)
+• 🎡 Колесо фортуны: +1..+5 билетов (без лимита!)
+
+🔄 <b>Что такое сезон?</b>
+• Сезон длится 7 дней
+• В конце сезона билеты обнуляются
+• Топ участников получают дополнительные призы
+• Стартует новый сезон с чистого листа
+
+✅ <b>Почему я не активирован?</b>
+Нужно выполнить 2 условия:
+1. Пригласить 2 друзей (один раз навсегда)
+2. Быть подписанным на ВСЕ каналы спонсоров
+⚠️ Подписки проверяются автоматически. Если подписались, но не активируется — нажмите «🔄 Обновить статус»
+
+🎲 <b>Как определяется победитель?</b>
+Розыгрыш проходит по системе «взвешенного рандома» — чем больше билетов, тем выше шанс!
+
+<b>Пример:</b>
+• Участник А: 10 билетов = 10 «шансов»
+• Участник Б: 50 билетов = 50 «шансов»
+• Участник В: 100 билетов = 100 «шансов»
+• ВСЕГО в розыгрыше: 160 билетов
+
+Шансы на победу:
+• А: 10/160 = 6.25%
+• Б: 50/160 = 31.25%
+• В: 100/160 = 62.5%
+
+Выбирается 2 победителя случайным образом из общего пула билетов.
+
+🎁 <b>Приз сезона:</b>
+Telegram Premium на 6 месяцев или 1000 ⭐
+
+❓ <b>Остались вопросы?</b>
+Пишите в поддержку: @moderatorgive_bot
+"""
+
 
 # --- Подключение к БД ---
 def get_db_connection():
@@ -427,6 +482,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("🏆 Лидерборд", callback_data="leaderboard"),
             InlineKeyboardButton("🏅 Победители", callback_data="winners_list"),
         ],
+        [InlineKeyboardButton("❓ FAQ", callback_data="faq")],
     ]
     await update.message.reply_text(
         text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb)
@@ -524,6 +580,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton(
                     "🏅 Победители", callback_data="winners_list"),
             ],
+            [InlineKeyboardButton("❓ FAQ", callback_data="faq")],
         ]
         try:
             await query.edit_message_text(
@@ -533,6 +590,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except BaseException:
             pass
 
+    elif data == "faq":
+        await query.answer()
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+        await query.edit_message_text(
+            text=FAQ_TEXT,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
     elif data == "my_tickets":
         await query.answer()
         await get_start_text(uid, query.from_user.first_name, context)
@@ -954,30 +1019,3 @@ async def fortune(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-def main():
-    init_db()
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("draw", draw))
-    app.add_handler(CommandHandler("stop", stop_giveaway))
-    app.add_handler(CommandHandler("resume", resume_giveaway))
-    app.add_handler(CommandHandler("reset_season", reset_season))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("fortune", fortune))
-
-    app.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.WEB_APP_DATA,
-            handle_webapp_data))
-
-    print("Бот запущен...")
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
