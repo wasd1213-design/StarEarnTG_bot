@@ -42,7 +42,8 @@ IS_ACTIVE = True
 # --- Подключение к БД ---
 def get_db_connection():
     if not MY_DATABASE_URL:
-        raise RuntimeError("MY_DATABASE_URL is not set (check .env or systemd Environment=)")
+        raise RuntimeError(
+            "MY_DATABASE_URL is not set (check .env or systemd Environment=)")
     return psycopg2.connect(MY_DATABASE_URL)
 
 
@@ -96,7 +97,8 @@ def ensure_user_season(user_id: int, season_id: int):
     """
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT season_id FROM users WHERE user_id=%s", (user_id,))
+            cur.execute(
+                "SELECT season_id FROM users WHERE user_id=%s", (user_id,))
             row = cur.fetchone()
             if not row:
                 return
@@ -133,7 +135,7 @@ async def check_subscription(user_id, channel, context):
     try:
         member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except:
+    except BaseException:
         return False
 
 
@@ -142,7 +144,8 @@ def get_tickets(user_id: int) -> int:
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT COALESCE(tickets, 0) FROM users WHERE user_id=%s", (user_id,))
+                cur.execute(
+                    "SELECT COALESCE(tickets, 0) FROM users WHERE user_id=%s", (user_id,))
                 row = cur.fetchone()
                 return int(row[0] or 0) if row else 0
     except Exception as e:
@@ -156,7 +159,8 @@ def get_fortune_shortcut(user_id: int):
             [
                 KeyboardButton(
                     "🎡 Колесо фортуны",
-                    web_app=WebAppInfo(url=f"https://moygivawaybot.ru/index.html?user_id={user_id}"),
+                    web_app=WebAppInfo(
+                        url=f"https://moygivawaybot.ru/index.html?user_id={user_id}"),
                 )
             ]
         ],
@@ -344,7 +348,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("UPDATE users SET last_seen=%s WHERE user_id=%s", (utcnow(), uid))
+                cur.execute(
+                    "UPDATE users SET last_seen=%s WHERE user_id=%s", (utcnow(), uid))
                 conn.commit()
     except Exception as e:
         print("last_seen update error:", e)
@@ -375,7 +380,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             if row:
                                 lr, activated = row
                                 if (not activated) and lr >= 2:
-                                    cur.execute("UPDATE users SET activated=TRUE WHERE user_id=%s", (referrer,))
+                                    cur.execute(
+                                        "UPDATE users SET activated=TRUE WHERE user_id=%s", (referrer,))
                                     activated = True
 
                                 if activated:
@@ -413,8 +419,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = await get_start_text(uid, first_name, context)
     kb = [
-        [InlineKeyboardButton("🔄 Проверить подписку", callback_data="check_sub")],
-        [InlineKeyboardButton("🔗 Моя реферальная ссылка", callback_data="my_reflink")],
+        [InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")],
+        [InlineKeyboardButton("🔗 Моя реферальная ссылка",
+                              callback_data="my_reflink")],
         [InlineKeyboardButton("🎫 Мои билеты", callback_data="my_tickets")],
         [
             InlineKeyboardButton("🏆 Лидерборд", callback_data="leaderboard"),
@@ -443,21 +450,87 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data in ("check_sub", "back_to_main"):
         await query.answer("Обновляю...")
+        # === ПРОВЕРКА РЕФЕРАЛОВ ===
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Получить всех рефералов пользователя
+                cur.execute(
+                    "SELECT referred_id FROM referrals WHERE referrer_id=%s",
+                    (uid,)
+                )
+                referrals = cur.fetchall()
+                
+                newly_validated = 0
+                
+                for (referred_id,) in referrals:
+                    # Проверить, подписан ли реферал ХОТЯ БЫ на 1 канал
+                    is_subscribed = False
+                    for channel in SPONSORS:
+                        try:
+                            member = await context.bot.get_chat_member(
+                                chat_id=channel, 
+                                user_id=referred_id
+                            )
+                            if member.status in ["member", "administrator", "creator"]:
+                                is_subscribed = True
+                                break
+                        except:
+                            pass
+                    
+                    # Если подписан и ещё не засчитан — засчитать
+                    if is_subscribed:
+                        cur.execute(
+                            """
+                            UPDATE referrals 
+                            SET is_valid=TRUE, checked_at=%s 
+                            WHERE referrer_id=%s AND referred_id=%s AND (is_valid=FALSE OR is_valid IS NULL)
+                            """,
+                            (utcnow(), uid, referred_id)
+                        )
+                        if cur.rowcount > 0:
+                            newly_validated += 1
+                
+                # Если появились новые валидные рефералы — проверить активацию
+                if newly_validated > 0:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM referrals 
+                        WHERE referrer_id=%s AND (is_valid=TRUE OR is_valid IS NULL)
+                        """,
+                        (uid,)
+                    )
+                    valid_refs = cur.fetchone()[0]
+                    
+                    if valid_refs >= 2:
+                        cur.execute(
+                            "UPDATE users SET activated=TRUE WHERE user_id=%s",
+                            (uid,)
+                        )
+                    
+                    conn.commit()
+        
+        # === КОНЕЦ ПРОВЕРКИ РЕФЕРАЛОВ ===
+
         text = await get_start_text(uid, query.from_user.first_name, context)
         kb = [
-            [InlineKeyboardButton("🔄 Проверить подписку", callback_data="check_sub")],
-            [InlineKeyboardButton("🔗 Моя реферальная ссылка", callback_data="my_reflink")],
+            [InlineKeyboardButton("🔄 Обновить статус",
+                                  callback_data="check_sub")],
+            [InlineKeyboardButton("🔗 Моя реферальная ссылка",
+                                  callback_data="my_reflink")],
             [InlineKeyboardButton("🎫 Мои билеты", callback_data="my_tickets")],
             [
-                InlineKeyboardButton("🏆 Лидерборд", callback_data="leaderboard"),
-                InlineKeyboardButton("🏅 Победители", callback_data="winners_list"),
+                InlineKeyboardButton(
+                    "🏆 Лидерборд", callback_data="leaderboard"),
+                InlineKeyboardButton(
+                    "🏅 Победители", callback_data="winners_list"),
             ],
         ]
         try:
             await query.edit_message_text(
-                text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb)
+                text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(
+                    kb)
             )
-        except:
+        except BaseException:
             pass
 
     elif data == "my_tickets":
@@ -479,7 +552,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if row:
                         is_sub = (row[0] == 1)
                         activated = bool(row[1])
-        except:
+        except BaseException:
             pass
 
         if not activated:
@@ -535,7 +608,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 res = "🏆 <b>ТОП-10 ПО БИЛЕТАМ:</b>\n\n"
                 for i, r in enumerate(rows, 1):
                     res += f"{i}. {mask_username(r[0])} — {r[1]} 🎫\n"
-        except:
+        except BaseException:
             res = "Ошибка."
 
         kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
@@ -559,13 +632,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     safe_name = mask_username(r[0])
                     date_str = r[1].strftime("%d.%m.%Y") if r[1] else "-"
                     res += f"{i}. <b>{safe_name}</b> ({date_str})\n"
-        except:
+        except BaseException:
             res = "Ошибка."
 
         kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
         await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
 
 # --- АДМИНКА ---
+
+
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMINS:
         return
@@ -588,7 +663,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(uid, msg)
                 count += 1
                 await asyncio.sleep(0.05)
-            except:
+            except BaseException:
                 pass
 
         await update.message.reply_text(f"✅ Доставлено: {count}")
@@ -622,7 +697,9 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = (
             f"📊 <b>СТАТИСТИКА БОТА:</b>\n\n"
-            f"🗓 <b>Сезон:</b> {season_start.strftime('%d.%m.%Y')} — {season_end.strftime('%d.%m.%Y')}\n"
+            f"🗓 <b>Сезон:</b> {
+                season_start.strftime('%d.%m.%Y')} — {
+                season_end.strftime('%d.%m.%Y')}\n"
             f"👥 <b>Всего пользователей:</b> {total_users}\n"
             f"✅ <b>Активных участников (subscribed + tickets>0):</b> {active_participants}\n"
             f"🎫 <b>Всего билетов в игре (сезонный баланс):</b> {total_tickets}\n"
@@ -676,7 +753,8 @@ async def reset_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- Колесо фортуны: обработка данных WebApp ---
-async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_webapp_data(
+        update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     now = utcnow()
 
@@ -714,7 +792,8 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                # 1) фиксируем spin_id; если уже был — это повторная отправка, просто игнорируем
+                # 1) фиксируем spin_id; если уже был — это повторная отправка,
+                # просто игнорируем
                 cur.execute(
                     """
                     INSERT INTO fortune_spins (spin_id, user_id, prize_code, created_at)
@@ -727,7 +806,8 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     return
 
                 # 2) проверяем кулдаун
-                cur.execute("SELECT last_fortune_time FROM users WHERE user_id=%s", (user_id,))
+                cur.execute(
+                    "SELECT last_fortune_time FROM users WHERE user_id=%s", (user_id,))
                 row = cur.fetchone()
                 last_spin_time = row[0] if row else None
 
@@ -737,7 +817,10 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if last_spin_time:
                     delta = now - last_spin_time
                     if delta < timedelta(hours=6):
-                        seconds_left = int(timedelta(hours=6).total_seconds() - delta.total_seconds())
+                        seconds_left = int(
+                            timedelta(
+                                hours=6).total_seconds() -
+                            delta.total_seconds())
                         h_left = seconds_left // 3600
                         m_left = (seconds_left % 3600) // 60
                         await update.effective_message.reply_text(
@@ -778,8 +861,9 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
         print("Ошибка WebApp:", e)
         print(traceback.format_exc())
 
-
 # --- DRAW (2 победителя) ---
+
+
 async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMINS:
         return
@@ -798,7 +882,8 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if len(rows) < 2:
             await update.message.reply_text(
-                f"❌ Недостаточно участников для выбора 2 победителей (нужно минимум 2, сейчас: {len(rows)})."
+                f"❌ Недостаточно участников для выбора 2 победителей (нужно минимум 2, сейчас: {
+                    len(rows)})."
             )
             return
 
@@ -851,7 +936,7 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_message(wid, win_msg, parse_mode=ParseMode.HTML)
                 success_count += 1
-            except:
+            except BaseException:
                 pass
 
         await update.message.reply_text(f"✅ ЛС отправлено {success_count} из 2 победителям.")
@@ -885,7 +970,10 @@ def main():
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("fortune", fortune))
 
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
+    app.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.WEB_APP_DATA,
+            handle_webapp_data))
 
     print("Бот запущен...")
     app.run_polling()
