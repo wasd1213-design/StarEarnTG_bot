@@ -70,7 +70,7 @@ def get_active_season():
                 SELECT id, start_at, end_at
                 FROM seasons
                 WHERE end_at > %s
-                ORDER BY end_at ASC
+                ORDER BY start_at DESC, id DESC
                 LIMIT 1
                 """,
                 (now,),
@@ -130,6 +130,12 @@ def mask_username(username: str) -> str:
         return f"@{username[:1]}***"
     return f"@{username[:2]}***{username[-1]}"
 
+def display_username(username: str) -> str:
+    """Показать username полностью."""
+    if not username:
+        return "Без ника"
+    username = username.lstrip("@")
+    return f"@{username}"
 
 async def check_subscription(user_id, channel, context):
     try:
@@ -664,7 +670,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 res = "🏆 <b>ТОП-10 ПО БИЛЕТАМ:</b>\n\n"
                 for i, r in enumerate(rows, 1):
-                    res += f"{i}. {mask_username(r[0])} — {r[1]} 🎫\n"
+                    res += f"{i}. {display_username(r[0])} — {r[1]} 🎫\n"
         except BaseException:
             res = "Ошибка."
 
@@ -686,7 +692,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 res = "🏅 <b>ПОСЛЕДНИЕ 15 ПОБЕДИТЕЛЕЙ:</b>\n\n"
                 for i, r in enumerate(rows, 1):
-                    safe_name = mask_username(r[0])
+                    safe_name = display_username(r[0])
                     date_str = r[1].strftime("%d.%m.%Y") if r[1] else "-"
                     res += f"{i}. <b>{safe_name}</b> ({date_str})\n"
         except BaseException:
@@ -796,33 +802,59 @@ async def resume_giveaway(update: Update, context: ContextTypes.DEFAULT_TYPE):
     IS_ACTIVE = True
     await update.message.reply_text("▶️ <b>СТАРТ</b>", parse_mode=ParseMode.HTML)
 
-
 async def reset_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Ручной сброс текущего сезона (вариант A): всем обнулить сезонные данные.
-    Внимание: это не создаёт новый season в таблице seasons. Просто обнуляет всем.
+    Перезапуск сезона на 7 дней (активация навсегда):
+    - закрываем все активные сезоны (end_at = now)
+    - создаём новый сезон (start_at=now, end_at=now+7 days)
+    - всем пользователям обнуляем только сезонные поля и ставим новый season_id
     """
     if update.effective_user.id not in ADMINS:
         return
+
+    now = utcnow()
+    new_end = now + timedelta(days=7)
+
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
+                # 0) закрыть все сезоны, которые ещё активны
+                cur.execute(
+                    "UPDATE seasons SET end_at=%s WHERE end_at > %s",
+                    (now, now),
+                )
+
+                # 1) создать новый сезон
+                cur.execute(
+                    "INSERT INTO seasons (start_at, end_at) VALUES (%s, %s) RETURNING id",
+                    (now, new_end),
+                )
+                new_season_id = cur.fetchone()[0]
+
+                # 2) сбросить всем только сезонные данные и привязать к новому сезону
                 cur.execute(
                     """
                     UPDATE users
                     SET
+                      season_id = %s,
                       tickets = 0,
                       season_ref_tickets = 0,
                       season_bonus_tickets = 0,
-                      last_fortune_time = NULL,
-                      season_id = NULL
-                    """
+                      last_fortune_time = NULL
+                    """,
+                    (new_season_id,),
                 )
-                conn.commit()
-        await update.message.reply_text("✅ <b>Сезон сброшен!</b>", parse_mode=ParseMode.HTML)
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
 
+                conn.commit()
+
+        await update.message.reply_text(
+            "✅ <b>Сезон перезапущен на 7 дней!</b>\n"
+            f"Новый сезон до: <b>{new_end.strftime('%d.%m.%Y %H:%M')} UTC</b>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
 
 # --- Колесо фортуны: обработка данных WebApp ---
 async def handle_webapp_data(
