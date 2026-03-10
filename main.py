@@ -1,7 +1,5 @@
 import os
-import json
 import asyncio
-import random
 from datetime import datetime, timedelta, timezone
 
 import psycopg2
@@ -27,154 +25,177 @@ from telegram.ext import (
 
 load_dotenv()
 
-# --- КОНФИГУРАЦИЯ ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MY_DATABASE_URL = os.getenv("MY_DATABASE_URL")
 
 SPONSORS = ["@openbusines", "@MTProxy_russia", "@SAGkatalog"]
-PRIZE = "Telegram Premium на 6 месяцев или 1000 ⭐"
 ADMINS = [514167463]
 BOT_USERNAME_FOR_REFLINK = "moy_giveaway_bot"
+WEBAPP_URL = "https://moygivawaybot.ru/index.html"
 
 IS_ACTIVE = True
 
+START_BONUS = 5
+WEEKLY_HOLD_BONUS = 10
+MAX_WEEKLY_HOLD_BONUSES = 4
+EXTRA_SPIN_COST = 1
 
-# --- Подключение к БД ---
+PREMIUM_COST = 700
+CHANNEL_PROMO_COST = 100
+PROFILE_BADGE_COST = 20
+
+FAQ_CB = "faq"
+
+
 def get_db_connection():
     if not MY_DATABASE_URL:
-        raise RuntimeError(
-            "MY_DATABASE_URL is not set (check .env or systemd Environment=)")
+        raise RuntimeError("MY_DATABASE_URL is not set")
     return psycopg2.connect(MY_DATABASE_URL)
 
 
 def to_naive_utc(dt):
-    """Привести datetime к UTC-naive (под timestamp without time zone в Postgres)."""
     if dt is None:
         return None
     return dt.replace(tzinfo=None)
 
 
 def utcnow():
-    # ЕДИНЫЙ стандарт времени во всём проекте: UTC-naive
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# --- СЕЗОНЫ ---
-def get_active_season():
-    """Возвращает (season_id, start_at, end_at). Создаёт новый сезон при необходимости."""
-    now = utcnow()
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, start_at, end_at
-                FROM seasons
-                WHERE end_at > %s
-                ORDER BY start_at DESC, id DESC
-                LIMIT 1
-                """,
-                (now,),
-            )
-            row = cur.fetchone()
-            if row:
-                return row[0], row[1], row[2]
-
-            start_at = now
-            end_at = now + timedelta(days=7)
-            cur.execute(
-                "INSERT INTO seasons (start_at, end_at) VALUES (%s, %s) RETURNING id",
-                (start_at, end_at),
-            )
-            season_id = cur.fetchone()[0]
-            conn.commit()
-            return season_id, start_at, end_at
-
-
-def ensure_user_season(user_id: int, season_id: int):
-    """
-    Если сезон у пользователя сменился/не задан — сбрасываем сезонное
-    и привязываем к текущему season_id.
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT season_id FROM users WHERE user_id=%s", (user_id,))
-            row = cur.fetchone()
-            if not row:
-                return
-
-            old_season_id = row[0]
-            if old_season_id != season_id:
-                cur.execute(
-                    """
-                    UPDATE users
-                    SET
-                      season_id = %s,
-                      tickets = 0,
-                      season_ref_tickets = 0,
-                      season_bonus_tickets = 0,
-                      last_fortune_time = NULL
-                    WHERE user_id = %s
-                    """,
-                    (season_id, user_id),
-                )
-                conn.commit()
-
-
-# --- Вспомогательные функции ---
-def mask_username(username: str) -> str:
-    if not username:
-        return "Без ника"
-    username = username.lstrip("@")
-    if len(username) <= 3:
-        return f"@{username[:1]}***"
-    return f"@{username[:2]}***{username[-1]}"
-
 def display_username(username: str) -> str:
-    """Показать username полностью."""
     if not username:
         return "Без ника"
-    username = username.lstrip("@")
-    return f"@{username}"
+    return f"@{username.lstrip('@')}"
+
 
 async def check_subscription(user_id, channel, context):
     try:
         member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except BaseException:
+    except Exception:
         return False
 
 
-def get_tickets(user_id: int) -> int:
-    """В новой модели tickets НЕ пересчитываем. Только читаем."""
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COALESCE(tickets, 0) FROM users WHERE user_id=%s", (user_id,))
-                row = cur.fetchone()
-                return int(row[0] or 0) if row else 0
-    except Exception as e:
-        print("tickets read error:", e)
-        return 0
+def get_level_info(ref_count: int):
+    if ref_count >= 15:
+        return {
+            "name": "VIP",
+            "emoji": "🌟",
+            "bonus_percent": 60,
+            "multiplier": 1.60,
+            "next_target": None,
+            "next_name": None,
+            "expected_value": 1.70,
+        }
+    if ref_count >= 10:
+        return {
+            "name": "Gold",
+            "emoji": "🥇",
+            "bonus_percent": 35,
+            "multiplier": 1.35,
+            "next_target": 15,
+            "next_name": "VIP",
+            "expected_value": 1.43,
+        }
+    if ref_count >= 5:
+        return {
+            "name": "Silver",
+            "emoji": "🥈",
+            "bonus_percent": 15,
+            "multiplier": 1.15,
+            "next_target": 10,
+            "next_name": "Gold",
+            "expected_value": 1.22,
+        }
+    return {
+        "name": "Bronze",
+        "emoji": "🥉",
+        "bonus_percent": 0,
+        "multiplier": 1.00,
+        "next_target": 5,
+        "next_name": "Silver",
+        "expected_value": 1.06,
+    }
 
 
-def get_fortune_shortcut(user_id: int):
+def get_reply_menu(user_id: int):
     return ReplyKeyboardMarkup(
         [
             [
                 KeyboardButton(
-                    "🎡 Колесо фортуны",
-                    web_app=WebAppInfo(
-                        url=f"https://moygivawaybot.ru/index.html?user_id={user_id}"),
+                    "🌠 Звёздное Колесо",
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}?user_id={user_id}"),
                 )
-            ]
+            ],
+            [KeyboardButton("👤 Профиль"), KeyboardButton("🔄 Обмен звёзд")],
+            [KeyboardButton("🔗 Моя ссылка"), KeyboardButton("📚 FAQ")],
         ],
         resize_keyboard=True,
     )
 
 
-# --- DB init (без создания users, т.к. уже мигрировали) ---
+def get_main_inline():
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")],
+            [InlineKeyboardButton("👤 Профиль", callback_data="profile")],
+            [InlineKeyboardButton("🔗 Моя реферальная ссылка", callback_data="my_reflink")],
+            [InlineKeyboardButton("🔄 Обмен звёзд", callback_data="exchange")],
+            [InlineKeyboardButton("📚 FAQ", callback_data=FAQ_CB)],
+            [InlineKeyboardButton("🏆 Лидерборд", callback_data="leaderboard")],
+        ]
+    )
+
+
+def get_exchange_inline():
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(f"💎 Telegram Premium — {PREMIUM_COST} ⭐", callback_data="exchange_premium")],
+            [InlineKeyboardButton("💸 Вывод звёзд", callback_data="exchange_withdraw")],
+            [InlineKeyboardButton(f"📢 Промо канала — {CHANNEL_PROMO_COST} ⭐", callback_data="exchange_promo")],
+            [InlineKeyboardButton(f"🏅 Украшение профиля — {PROFILE_BADGE_COST} ⭐", callback_data="exchange_badge")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")],
+        ]
+    )
+
+
+FAQ_TEXT = f"""
+📚 <b>FAQ — Звёздное Колесо</b>
+
+🌠 <b>Как получить доступ к Звёздному Колесу?</b>
+1. Подпишитесь на все актуальные каналы спонсоров
+2. Пригласите 2 активных реферала
+
+⚠️ Даже после активации вы должны оставаться подписанными на все текущие каналы спонсоров.
+
+⭐ <b>Как получать звёзды?</b>
+• Вращать Звёздное Колесо — бесплатно 1 раз в 6 часов
+• Купить дополнительный спин за {EXTRA_SPIN_COST}⭐
+• Удерживать подписку на всех спонсоров — 1 раз в неделю начисляется бонус
+• Приглашать друзей и повышать уровень
+
+🏅 <b>Уровни и бонусы:</b>
+🥉 Bronze — 2 активных реферала, базовые шансы
+🥈 Silver — 5 активных рефералов, +15% к выигрышным секторам
+🥇 Gold — 10 активных рефералов, +35% к выигрышным секторам
+🌟 VIP — 15 активных рефералов, +60% к выигрышным секторам
+
+🎡 <b>Как работает бонус уровня?</b>
+Бонус применяется ко всем выигрышным секторам колеса:
+1⭐, 2⭐, 3⭐, 4⭐, 5⭐
+Сектор «ничего» уменьшается так, чтобы сумма вероятностей была 100%.
+
+🔄 <b>Обмен звёзд:</b>
+• Telegram Premium
+• Вывод звёзд
+• Промо канала
+• Украшение профиля
+
+❓ Поддержка: @moderatorgive_bot
+"""
+
+
 def init_db():
     try:
         with get_db_connection() as conn:
@@ -184,19 +205,9 @@ def init_db():
                     CREATE TABLE IF NOT EXISTS referrals (
                         referrer_id BIGINT,
                         referred_id BIGINT,
+                        is_valid BOOLEAN DEFAULT FALSE,
+                        checked_at TIMESTAMP NULL,
                         UNIQUE(referrer_id, referred_id)
-                    )
-                    """
-                )
-
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS winners (
-                        id SERIAL PRIMARY KEY,
-                        user_id BIGINT,
-                        username TEXT,
-                        prize TEXT,
-                        win_date TIMESTAMPTZ DEFAULT NOW()
                     )
                     """
                 )
@@ -212,57 +223,113 @@ def init_db():
                     """
                 )
 
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS fortune_spins (
+                        spin_id TEXT PRIMARY KEY,
+                        user_id BIGINT,
+                        prize_code TEXT,
+                        created_at TIMESTAMP
+                    )
+                    """
+                )
+
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS exchange_requests (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT,
+                        username TEXT,
+                        exchange_type TEXT,
+                        stars_amount INT,
+                        status TEXT DEFAULT 'new',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+
+                alter_statements = [
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS activated BOOLEAN DEFAULT FALSE",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS all_subscribed INT DEFAULT 0",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS tickets INT DEFAULT 0",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_fortune_time TIMESTAMP NULL",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS lifetime_ref_count INT DEFAULT 0",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_hold_bonus_count INT DEFAULT 0",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_hold_bonus_at TIMESTAMP NULL",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_badge BOOLEAN DEFAULT FALSE",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_level_notified TEXT DEFAULT 'Bronze'",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP NULL",
+                ]
+
+                for stmt in alter_statements:
+                    try:
+                        cursor.execute(stmt)
+                    except Exception as e:
+                        print("ALTER warning:", e)
+
                 conn.commit()
 
-        print("✅ База данных подключена.")
+        print("✅ База данных подключена и инициализирована.")
     except Exception as e:
         print(f"❌ Ошибка БД: {e}")
 
 
-# --- ГЕНЕРАЦИЯ ГЛАВНОГО МЕНЮ ---
-async def get_start_text(user_id, first_name, context):
-    season_id, season_start, season_end = get_active_season()
-    ensure_user_season(user_id, season_id)
+async def count_valid_refs(referrer_id: int, context: ContextTypes.DEFAULT_TYPE) -> int:
+    valid_count = 0
 
-    now = utcnow()
-    season_end = to_naive_utc(season_end)  # страховка от aware
-    left = season_end - now
-    if left.total_seconds() < 0:
-        left = timedelta(seconds=0)
-    days = left.days
-    hours = left.seconds // 3600
-    minutes = (left.seconds % 3600) // 60
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT referred_id, COALESCE(is_valid, FALSE) FROM referrals WHERE referrer_id=%s",
+                (referrer_id,),
+            )
+            rows = cur.fetchall()
 
-    activated = False
-    season_ref_tickets = 0
-    season_bonus_tickets = 0
-    all_subs_ok = True
+            for referred_id, is_valid in rows:
+                if is_valid:
+                    valid_count += 1
+                    continue
 
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
+                subscribed = False
+                for channel in SPONSORS:
+                    if await check_subscription(referred_id, channel, context):
+                        subscribed = True
+                        break
+
+                if subscribed:
+                    cur.execute(
+                        """
+                        UPDATE referrals
+                        SET is_valid=TRUE, checked_at=%s
+                        WHERE referrer_id=%s AND referred_id=%s
+                        """,
+                        (utcnow(), referrer_id, referred_id),
+                    )
+                    valid_count += 1
+
+            cur.execute(
+                "UPDATE users SET lifetime_ref_count=%s WHERE user_id=%s",
+                (valid_count, referrer_id),
+            )
+
+            if valid_count >= 2:
                 cur.execute(
-                    """
-                    SELECT COALESCE(activated,false),
-                           COALESCE(season_ref_tickets,0),
-                           COALESCE(season_bonus_tickets,0)
-                    FROM users WHERE user_id=%s
-                    """,
-                    (user_id,),
+                    "UPDATE users SET activated=TRUE WHERE user_id=%s",
+                    (referrer_id,),
                 )
-                row = cur.fetchone()
-                if row:
-                    activated, season_ref_tickets, season_bonus_tickets = row
-    except Exception as e:
-        print("read user flags error:", e)
 
+            conn.commit()
+
+    return valid_count
+
+
+async def get_user_state(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    all_subs_ok = True
     channels_list = ""
+
     for i, ch in enumerate(SPONSORS, 1):
         is_sub = await check_subscription(user_id, ch, context)
-        if not is_sub:
-            all_subs_ok = False
-            icon = "❌"
-        else:
+        if is_sub:
             icon = "✅"
             try:
                 with get_db_connection() as conn:
@@ -277,143 +344,200 @@ async def get_start_text(user_id, first_name, context):
                         )
                         conn.commit()
             except Exception as e:
-                print(f"Ошибка сохранения подписки на {ch}: {e}")
+                print("channel_subscriptions save error:", e)
+        else:
+            icon = "❌"
+            all_subs_ok = False
 
         channels_list += f"{i}. {ch} {icon}\n"
 
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET all_subscribed=%s WHERE user_id=%s",
+                (1 if all_subs_ok else 0, user_id),
+            )
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(activated, FALSE),
+                    COALESCE(lifetime_ref_count, 0),
+                    COALESCE(tickets, 0),
+                    COALESCE(weekly_hold_bonus_count, 0),
+                    last_fortune_time,
+                    COALESCE(profile_badge, FALSE),
+                    COALESCE(last_level_notified, 'Bronze')
+                FROM users
+                WHERE user_id=%s
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            conn.commit()
+
+    activated = False
+    ref_count = 0
+    stars = 0
+    weekly_hold_bonus_count = 0
+    last_fortune_time = None
+    profile_badge = False
+    last_level_notified = "Bronze"
+
+    if row:
+        (
+            activated,
+            ref_count,
+            stars,
+            weekly_hold_bonus_count,
+            last_fortune_time,
+            profile_badge,
+            last_level_notified,
+        ) = row
+
+    level = get_level_info(ref_count)
+
+    return {
+        "activated": activated,
+        "all_subs_ok": all_subs_ok,
+        "channels_list": channels_list,
+        "ref_count": ref_count,
+        "stars": stars,
+        "weekly_hold_bonus_count": weekly_hold_bonus_count,
+        "last_fortune_time": to_naive_utc(last_fortune_time),
+        "profile_badge": profile_badge,
+        "level": level,
+        "last_level_notified": last_level_notified,
+    }
+
+
+async def notify_level_up_if_needed(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     try:
+        state = await get_user_state(user_id, context)
+        current_level = state["level"]["name"]
+
         with get_db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE users SET all_subscribed=%s WHERE user_id=%s",
-                    (1 if all_subs_ok else 0, user_id),
+                    "SELECT COALESCE(last_level_notified, 'Bronze') FROM users WHERE user_id=%s",
+                    (user_id,),
                 )
-                conn.commit()
-    except Exception as e:
-        print("all_subscribed update error:", e)
+                row = cur.fetchone()
+                prev_level = row[0] if row else "Bronze"
 
-    tickets = get_tickets(user_id)
+                if prev_level != current_level:
+                    cur.execute(
+                        "UPDATE users SET last_level_notified=%s WHERE user_id=%s",
+                        (current_level, user_id),
+                    )
+                    conn.commit()
+
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            f"🎉 <b>Поздравляем!</b>\n\n"
+                            f"Ваш уровень повышен до <b>{state['level']['emoji']} {current_level}</b>\n"
+                            f"Бонус к выигрышным секторам: <b>+{state['level']['bonus_percent']}%</b>\n"
+                            f"Средний доход со спина: <b>~{state['level']['expected_value']:.2f} ⭐</b>"
+                        ),
+                        parse_mode=ParseMode.HTML,
+                    )
+    except Exception as e:
+        print("notify_level_up_if_needed error:", e)
+
+
+async def get_start_text(user_id, first_name, context):
+    state = await get_user_state(user_id, context)
 
     activation_text = (
-        "✅ <b>Вы активированы</b> (2 реферала выполнено)\n"
-        if activated
-        else "⚠️ <b>Не активированы</b>: пригласите <b>2</b> друзей (один раз), чтобы участвовать полноценно.\n"
+        "✅ <b>Доступ к колесу активирован</b>\n"
+        if state["activated"]
+        else "⚠️ <b>Для открытия колеса пригласите 2 активных реферала</b>\n"
     )
 
-    msg = (
+    if not state["all_subs_ok"]:
+        wheel_access = "❌ <b>Звёздное Колесо недоступно: подпишитесь на всех спонсоров</b>"
+    elif not state["activated"]:
+        wheel_access = "❌ <b>Звёздное Колесо недоступно: не хватает 2 активных рефералов</b>"
+    else:
+        wheel_access = "✅ <b>Звёздное Колесо доступно</b>"
+
+    if state["level"]["next_target"]:
+        left = max(0, state["level"]["next_target"] - state["ref_count"])
+        progress_text = (
+            f"📈 До уровня <b>{state['level']['next_name']}</b>: "
+            f"<b>{state['ref_count']}/{state['level']['next_target']}</b> "
+            f"(осталось {left})\n"
+        )
+    else:
+        progress_text = "👑 У вас максимальный уровень\n"
+
+    cooldown_text = "✅ Можно крутить прямо сейчас"
+    if state["last_fortune_time"]:
+        delta = utcnow() - state["last_fortune_time"]
+        if delta < timedelta(hours=6):
+            seconds_left = int(timedelta(hours=6).total_seconds() - delta.total_seconds())
+            h_left = seconds_left // 3600
+            m_left = (seconds_left % 3600) // 60
+            cooldown_text = f"⏳ До следующей бесплатной крутки: {h_left}ч {m_left}м"
+
+    return (
         f"👋 <b>Привет, {first_name}!</b>\n\n"
-        f"🎁 <b>Приз недели:</b> {PRIZE}\n\n"
-        f"⏳ <b>До конца сезона:</b> {days}д {hours:02d}ч {minutes:02d}м\n\n"
-        f"{activation_text}\n"
-        f"1️⃣ <b>Подпишись на все каналы спонсоров:</b>\n"
-        f"{channels_list}\n"
-        f"2️⃣ После активации за каждого нового друга — <b>+1 билет</b> (до <b>10</b> за сезон)\n"
-        f"3️⃣ 🎡 Колесо фортуны даёт <b>+1..+5</b> билетов (сверх реф-потолка)\n\n"
-        f"🎫 <b>Ваши билеты:</b> {tickets}\n"
-        f"   └ реф-билеты в сезоне: {season_ref_tickets}/10\n"
-        f"   └ билеты с колеса: {season_bonus_tickets}\n"
+        f"🌠 <b>Добро пожаловать в Звёздное Колесо</b>\n\n"
+        f"{activation_text}"
+        f"{wheel_access}\n\n"
+        f"⭐ <b>Ваш баланс:</b> {state['stars']}\n"
+        f"🏅 <b>Ваш уровень:</b> {state['level']['emoji']} {state['level']['name']}\n"
+        f"🎯 <b>Бонус уровня:</b> +{state['level']['bonus_percent']}% к выигрышным секторам\n"
+        f"📊 <b>Средний доход со спина:</b> ~{state['level']['expected_value']:.2f} ⭐\n"
+        f"{progress_text}\n"
+        f"🔄 <b>Статус колеса:</b> {cooldown_text}\n"
+        f"💫 <b>Доп. вращение:</b> доступно за {EXTRA_SPIN_COST}⭐\n\n"
+        f"📌 <b>Спонсоры:</b>\n{state['channels_list']}\n"
+        f"👥 <b>Активные рефералы:</b> {state['ref_count']}\n"
+        f"🎁 <b>Недельных бонусов получено:</b> "
+        f"{state['weekly_hold_bonus_count']}/{MAX_WEEKLY_HOLD_BONUSES}\n"
     )
-    return msg
 
 
-FAQ_TEXT = """
-📚 <b>ЧАСТО ЗАДАВАЕМЫЕ ВОПРОСЫ</b>
-
-🎡 <b>Колесо фортуны:</b>
-• Крутите бесплатно раз в 6 часов
-• Или испытайте удачу за 1 билет (не дожидаясь окончания времени!)
-• Выигрыш: +1, +2, +3, +4 или +5 билетов
-• Билеты с колеса НЕ входят в лимит реферальных (сверх 10)
-
-🎯 <b>Как открыть Колесо фортуны?</b>
-1️⃣ Нажмите кнопку «Меню» (квадрат 2×2) внизу экрана
-2️⃣ Выберите «🎡 Колесо фортуны»
-3️⃣ Откроется мини-приложение — крутите!
-
-📋 <b>Как получить билеты?</b>
-• Пригласите 2 друзей для активации аккаунта
-• За каждого нового друга: +1 билет (макс. 10 за сезон)
-• 🎡 Колесо фортуны: +1..+5 билетов (без лимита!)
-
-🔄 <b>Что такое сезон?</b>
-• Сезон длится 7 дней
-• В конце сезона билеты обнуляются
-• Топ участников получают дополнительные призы
-• Стартует новый сезон с чистого листа
-
-✅ <b>Почему я не активирован?</b>
-Нужно выполнить 2 условия:
-1. Пригласить 2 друзей (один раз навсегда)
-2. Быть подписанным на ВСЕ каналы спонсоров
-⚠️ Подписки проверяются автоматически. Если подписались, но не активируется — нажмите «🔄 Обновить статус»
-
-🎲 <b>Как определяется победитель?</b>
-Розыгрыш проходит по системе «взвешенного рандома» — чем больше билетов, тем выше шанс!
-
-<b>Пример:</b>
-• Участник А: 10 билетов = 10 «шансов»
-• Участник Б: 50 билетов = 50 «шансов»
-• Участник В: 100 билетов = 100 «шансов”  
-• ВСЕГО в розыгрыше: 160 билетов
-
-Шансы на победу:
-• А: 10/160 = 6.25%
-• Б: 50/160 = 31.25%
-• В: 100/160 = 62.5%
-
-Выбирается 2 победителя случайным образом из общего пула билетов.
-
-🎁 <b>Приз сезона:</b>
-Telegram Premium на 6 месяцев или 1000 ⭐
-
-❓ <b>Остались вопросы?</b>
-Пишите в поддержку: @moderatorgive_bot
-"""
-
-
-# --- START ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not IS_ACTIVE:
-        pause_text = (
-            "🏁 <b>РОЗЫГРЫШ ЗАВЕРШЕН!</b>\n\n"
-            "Прямо сейчас мы подводим итоги и готовим новый сезон.\n"
-            "Список каналов временно скрыт.\n\n"
-            "🔔 <i>Ожидайте уведомления о старте нового конкурса!</i>"
-        )
-        await update.message.reply_text(pause_text, parse_mode=ParseMode.HTML)
+        await update.message.reply_text("⛔️ Бот временно на паузе.", parse_mode=ParseMode.HTML)
         return
 
     user = update.effective_user
     uid = user.id
     first_name = user.first_name
     username = user.username
+    is_new_user = False
 
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO users (user_id, username)
-                    VALUES (%s, %s)
-                    ON CONFLICT (user_id) DO UPDATE
-                    SET username = EXCLUDED.username
-                    """,
-                    (uid, username),
-                )
-                conn.commit()
-    except Exception as e:
-        print(f"Ошибка регистрации: {e}")
+                cur.execute("SELECT user_id FROM users WHERE user_id=%s", (uid,))
+                exists = cur.fetchone()
 
-    season_id, season_start, season_end = get_active_season()
-    ensure_user_season(uid, season_id)
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE users SET last_seen=%s WHERE user_id=%s", (utcnow(), uid))
+                if not exists:
+                    is_new_user = True
+                    cur.execute(
+                        """
+                        INSERT INTO users (
+                            user_id, username, tickets, activated, all_subscribed,
+                            lifetime_ref_count, weekly_hold_bonus_count, profile_badge,
+                            last_level_notified, last_seen
+                        )
+                        VALUES (%s, %s, %s, FALSE, 0, 0, 0, FALSE, 'Bronze', %s)
+                        """,
+                        (uid, username, START_BONUS, utcnow()),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE users SET username=%s, last_seen=%s WHERE user_id=%s",
+                        (username, utcnow(), uid),
+                    )
+
                 conn.commit()
     except Exception as e:
-        print("last_seen update error:", e)
+        print("start user save error:", e)
 
     if context.args:
         ref_str = context.args[0]
@@ -423,86 +547,143 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 with get_db_connection() as conn:
                     with conn.cursor() as cur:
                         cur.execute(
-                            "INSERT INTO referrals (referrer_id, referred_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                            """
+                            INSERT INTO referrals (referrer_id, referred_id)
+                            VALUES (%s, %s)
+                            ON CONFLICT DO NOTHING
+                            """,
                             (referrer, uid),
                         )
-
-                        if cur.rowcount > 0:
-                            cur.execute(
-                                """
-                                UPDATE users
-                                SET lifetime_ref_count = lifetime_ref_count + 1
-                                WHERE user_id = %s
-                                RETURNING lifetime_ref_count, activated
-                                """,
-                                (referrer,),
-                            )
-                            row = cur.fetchone()
-                            if row:
-                                lr, activated = row
-                                if (not activated) and lr >= 2:
-                                    cur.execute(
-                                        "UPDATE users SET activated=TRUE WHERE user_id=%s", (referrer,))
-                                    activated = True
-
-                                if activated:
-                                    ensure_user_season(referrer, season_id)
-
-                                    cur.execute(
-                                        """
-                                        SELECT COALESCE(season_ref_tickets,0)
-                                        FROM users
-                                        WHERE user_id=%s
-                                        FOR UPDATE
-                                        """,
-                                        (referrer,),
-                                    )
-                                    sref = cur.fetchone()[0]
-                                    if sref < 10:
-                                        cur.execute(
-                                            """
-                                            UPDATE users
-                                            SET season_ref_tickets = season_ref_tickets + 1,
-                                                tickets = tickets + 1
-                                            WHERE user_id=%s
-                                            """,
-                                            (referrer,),
-                                        )
-
                         conn.commit()
             except Exception as e:
-                print(f"Ошибка рефералки: {e}")
+                print("ref insert error:", e)
+
+    await count_valid_refs(uid, context)
+
+    if context.args:
+        ref_str = context.args[0]
+        if ref_str.isdigit() and int(ref_str) != uid:
+            referrer = int(ref_str)
+            await count_valid_refs(referrer, context)
+            await notify_level_up_if_needed(referrer, context)
+
+    hello_text = "🎁 Вам начислено <b>5 стартовых звёзд!</b>\n\n" if is_new_user else ""
 
     await update.message.reply_text(
-        "Открой мини-приложение 'Колесо фортуны' кнопкой ниже:",
-        reply_markup=get_fortune_shortcut(uid),
+        hello_text + "Откройте меню ниже и начните путь к наградам.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_reply_menu(uid),
     )
 
     text = await get_start_text(uid, first_name, context)
-    kb = [
-        [InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")],
-        [InlineKeyboardButton("🔗 Моя реферальная ссылка",
-                              callback_data="my_reflink")],
-        [InlineKeyboardButton("🎫 Мои билеты", callback_data="my_tickets")],
-        [InlineKeyboardButton("📚 FAQ", callback_data=FAQ_CB)],
-        [
-            InlineKeyboardButton("🏆 Лидерборд", callback_data="leaderboard"),
-            InlineKeyboardButton("🏅 Победители", callback_data="winners_list"),
-        ],
-    ]
     await update.message.reply_text(
-        text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb)
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_main_inline(),
     )
 
 
-# --- КНОПКИ ---
+async def show_profile(chat_or_query, user_id: int, first_name: str, context: ContextTypes.DEFAULT_TYPE, edit=False):
+    state = await get_user_state(user_id, context)
+
+    if state["level"]["next_target"]:
+        remain = max(0, state["level"]["next_target"] - state["ref_count"])
+        progress = (
+            f"📈 До следующего уровня: <b>{state['ref_count']}/{state['level']['next_target']}</b>\n"
+            f"Осталось пригласить: <b>{remain}</b>"
+        )
+    else:
+        progress = "👑 Достигнут максимальный уровень"
+
+    wheel_status = "Доступно ✅" if state["activated"] and state["all_subs_ok"] else "Недоступно ❌"
+
+    text = (
+        f"👤 <b>Профиль {first_name}</b>\n\n"
+        f"⭐ <b>Баланс:</b> {state['stars']}\n"
+        f"🏅 <b>Уровень:</b> {state['level']['emoji']} {state['level']['name']}\n"
+        f"🎯 <b>Бонус уровня:</b> +{state['level']['bonus_percent']}% к выигрышным секторам\n"
+        f"📊 <b>Средний доход со спина:</b> ~{state['level']['expected_value']:.2f} ⭐\n"
+        f"👥 <b>Активные рефералы:</b> {state['ref_count']}\n"
+        f"{progress}\n\n"
+        f"🔄 <b>Доступ к колесу:</b> {wheel_status}\n"
+        f"💫 <b>Доп. спин:</b> {EXTRA_SPIN_COST}⭐\n"
+        f"🎁 <b>Недельных бонусов:</b> {state['weekly_hold_bonus_count']}/{MAX_WEEKLY_HOLD_BONUSES}\n"
+        f"🏅 <b>Украшение профиля:</b> {'Есть' if state['profile_badge'] else 'Нет'}"
+    )
+
+    if edit:
+        await chat_or_query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+            ),
+        )
+    else:
+        await chat_or_query.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+            ),
+        )
+
+
+async def process_weekly_hold_bonus(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    state = await get_user_state(user_id, context)
+
+    if not state["all_subs_ok"]:
+        return False, "Пользователь не подписан на всех спонсоров"
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(weekly_hold_bonus_count, 0),
+                    last_hold_bonus_at
+                FROM users
+                WHERE user_id=%s
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False, "Пользователь не найден"
+
+            bonus_count, last_hold_bonus_at = row
+            bonus_count = int(bonus_count or 0)
+            last_hold_bonus_at = to_naive_utc(last_hold_bonus_at)
+
+            if bonus_count >= MAX_WEEKLY_HOLD_BONUSES:
+                return False, "Лимит недельных бонусов исчерпан"
+
+            now = utcnow()
+            if last_hold_bonus_at and (now - last_hold_bonus_at) < timedelta(days=7):
+                return False, "Ещё не прошла неделя"
+
+            cur.execute(
+                """
+                UPDATE users
+                SET tickets = COALESCE(tickets, 0) + %s,
+                    weekly_hold_bonus_count = COALESCE(weekly_hold_bonus_count, 0) + 1,
+                    last_hold_bonus_at = %s
+                WHERE user_id = %s
+                """,
+                (WEEKLY_HOLD_BONUS, now, user_id),
+            )
+            conn.commit()
+
+    return True, f"Начислено {WEEKLY_HOLD_BONUS} ⭐"
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
 
     if not IS_ACTIVE:
-        await query.answer()
         await query.edit_message_text(
-            "🏁 Розыгрыш завершен. Идет подготовка нового этапа.",
+            "⛔️ Бот временно на паузе.",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -511,152 +692,200 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data in ("check_sub", "back_to_main"):
-        await query.answer("Обновляю...")
-        # === ПРОВЕРКА РЕФЕРАЛОВ ===
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                # Получить всех рефералов пользователя
-                cur.execute(
-                    "SELECT referred_id FROM referrals WHERE referrer_id=%s",
-                    (uid,)
-                )
-                referrals = cur.fetchall()
-                
-                newly_validated = 0
-                
-                for (referred_id,) in referrals:
-                    # Проверить, подписан ли реферал ХОТЯ БЫ на 1 канал
-                    is_subscribed = False
-                    for channel in SPONSORS:
-                        try:
-                            member = await context.bot.get_chat_member(
-                                chat_id=channel, 
-                                user_id=referred_id
-                            )
-                            if member.status in ["member", "administrator", "creator"]:
-                                is_subscribed = True
-                                break
-                        except:
-                            pass
-                    
-                    # Если подписан и ещё не засчитан — засчитать
-                    if is_subscribed:
-                        cur.execute(
-                            """
-                            UPDATE referrals 
-                            SET is_valid=TRUE, checked_at=%s 
-                            WHERE referrer_id=%s AND referred_id=%s AND (is_valid=FALSE OR is_valid IS NULL)
-                            """,
-                            (utcnow(), uid, referred_id)
-                        )
-                        if cur.rowcount > 0:
-                            newly_validated += 1
-                
-                # Если появились новые валидные рефералы — проверить активацию
-                if newly_validated > 0:
-                    cur.execute(
-                        """
-                        SELECT COUNT(*) FROM referrals 
-                        WHERE referrer_id=%s AND (is_valid=TRUE OR is_valid IS NULL)
-                        """,
-                        (uid,)
-                    )
-                    valid_refs = cur.fetchone()[0]
-                    
-                    if valid_refs >= 2:
-                        cur.execute(
-                            "UPDATE users SET activated=TRUE WHERE user_id=%s",
-                            (uid,)
-                        )
-                    
-                    conn.commit()
-        
-        # === КОНЕЦ ПРОВЕРКИ РЕФЕРАЛОВ ===
-
+        await count_valid_refs(uid, context)
         text = await get_start_text(uid, query.from_user.first_name, context)
-        kb = [
-            [InlineKeyboardButton("🔄 Обновить статус",
-                                  callback_data="check_sub")],
-            [InlineKeyboardButton("🔗 Моя реферальная ссылка",
-                                  callback_data="my_reflink")],
-            [InlineKeyboardButton("🎫 Мои билеты", callback_data="my_tickets")],
-        [InlineKeyboardButton("📚 FAQ", callback_data=FAQ_CB)],
-            [
-                InlineKeyboardButton(
-                    "🏆 Лидерборд", callback_data="leaderboard"),
-                InlineKeyboardButton(
-                    "🏅 Победители", callback_data="winners_list"),
-            ],
-        ]
-        try:
-            await query.edit_message_text(
-                text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(
-                    kb)
-            )
-        except BaseException:
-            pass
-
-    elif data == "my_tickets":
-        await query.answer()
-        await get_start_text(uid, query.from_user.first_name, context)
-
-        tickets = get_tickets(uid)
-
-        is_sub = False
-        activated = False
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT COALESCE(all_subscribed,0), COALESCE(activated,false) FROM users WHERE user_id=%s",
-                        (uid,),
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        is_sub = (row[0] == 1)
-                        activated = bool(row[1])
-        except BaseException:
-            pass
-
-        if not activated:
-            text = (
-                "⚠️ <b>Вы ещё не активированы.</b>\n\n"
-                "Нужно пригласить <b>2</b> друзей (один раз), чтобы участвовать полноценно.\n"
-                f"🎫 Сейчас билетов: <b>{tickets}</b>"
-            )
-        elif not is_sub:
-            text = (
-                "⚠️ <b>Вы не подписаны на спонсоров!</b>\n\n"
-                "Для участия в розыгрыше нужно быть подписанным.\n"
-                f"🎫 Ваши билеты сохранены: <b>{tickets}</b>"
-            )
-        else:
-            text = f"🎫 <b>Ваши билеты: {tickets}</b>"
-
-        kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
         await query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_inline(),
         )
 
+    elif data == "profile":
+        await show_profile(query, uid, query.from_user.first_name, context, edit=True)
+
     elif data == "my_reflink":
-        await query.answer()
         link = f"https://t.me/{BOT_USERNAME_FOR_REFLINK}?start={uid}"
+        state = await get_user_state(uid, context)
+
         text = (
             f"🔗 <b>Ваша ссылка для приглашения:</b>\n\n"
             f"<code>{link}</code>\n\n"
-            f"Нужно <b>2</b> друга (один раз), чтобы активироваться."
+            f"👥 Активных рефералов: <b>{state['ref_count']}</b>\n"
+            f"Для открытия колеса нужно <b>2</b> активных реферала."
         )
-        kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+            ),
+        )
+
+    elif data == "exchange":
+        state = await get_user_state(uid, context)
+        text = (
+            f"🔄 <b>Обмен звёзд</b>\n\n"
+            f"⭐ Ваш баланс: <b>{state['stars']}</b>\n\n"
+            f"Выберите нужное действие:"
+        )
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_exchange_inline(),
+        )
+
+    elif data == "exchange_premium":
+        state = await get_user_state(uid, context)
+        if state["level"]["name"] != "VIP":
+            await query.edit_message_text(
+                "❌ <b>Доступно только для VIP-уровня Звёздного Колеса!</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                ),
+            )
+            return
+
+        if state["stars"] < PREMIUM_COST:
+            await query.edit_message_text(
+                f"❌ Недостаточно звёзд.\nНужно: <b>{PREMIUM_COST} ⭐</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                ),
+            )
+            return
+
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE users SET tickets = tickets - %s WHERE user_id = %s",
+                    (PREMIUM_COST, uid),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO exchange_requests (user_id, username, exchange_type, stars_amount)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (uid, query.from_user.username, "premium", PREMIUM_COST),
+                )
+                conn.commit()
+
+        await query.edit_message_text(
+            "✅ Заявка на Telegram Premium создана. Ожидайте проверки администратора.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+            ),
+        )
+
+    elif data == "exchange_withdraw":
+        state = await get_user_state(uid, context)
+        if state["level"]["name"] != "VIP":
+            await query.edit_message_text(
+                "❌ <b>Доступно только для VIP-уровня Звёздного Колеса!</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                ),
+            )
+            return
+
+        await query.edit_message_text(
+            "💸 <b>Вывод звёзд</b>\n\n"
+            "Для вывода напишите администратору или добавьте отдельную форму реквизитов.\n"
+            "При необходимости можно доработать автоматические заявки на суммы 100/200/500 ⭐.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+            ),
+        )
+
+    elif data == "exchange_promo":
+        state = await get_user_state(uid, context)
+        if state["stars"] < CHANNEL_PROMO_COST:
+            await query.edit_message_text(
+                f"❌ Недостаточно звёзд.\nНужно: <b>{CHANNEL_PROMO_COST} ⭐</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                ),
+            )
+            return
+
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE users SET tickets = tickets - %s WHERE user_id = %s",
+                    (CHANNEL_PROMO_COST, uid),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO exchange_requests (user_id, username, exchange_type, stars_amount)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (uid, query.from_user.username, "promo", CHANNEL_PROMO_COST),
+                )
+                conn.commit()
+
+        await query.edit_message_text(
+            "✅ Заявка на промо канала создана. Администратор свяжется с вами.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+            ),
+        )
+
+    elif data == "exchange_badge":
+        state = await get_user_state(uid, context)
+        if state["profile_badge"]:
+            await query.edit_message_text(
+                "ℹ️ Украшение профиля у вас уже активировано.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                ),
+            )
+            return
+
+        if state["stars"] < PROFILE_BADGE_COST:
+            await query.edit_message_text(
+                f"❌ Недостаточно звёзд.\nНужно: <b>{PROFILE_BADGE_COST} ⭐</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                ),
+            )
+            return
+
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET tickets = tickets - %s,
+                        profile_badge = TRUE
+                    WHERE user_id = %s
+                    """,
+                    (PROFILE_BADGE_COST, uid),
+                )
+                conn.commit()
+
+        await query.edit_message_text(
+            "✅ Украшение профиля успешно активировано!",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+            ),
+        )
 
     elif data == "leaderboard":
-        await query.answer()
         try:
             with get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT username, tickets
+                        SELECT username, tickets, COALESCE(lifetime_ref_count, 0)
                         FROM users
                         WHERE tickets > 0
                         ORDER BY tickets DESC
@@ -666,57 +895,68 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     rows = cur.fetchall()
 
             if not rows:
-                res = "Пока пусто."
+                text = "Пока пусто."
             else:
-                res = "🏆 <b>ТОП-10 ПО БИЛЕТАМ:</b>\n\n"
-                for i, r in enumerate(rows, 1):
-                    res += f"{i}. {display_username(r[0])} — {r[1]} 🎫\n"
-        except BaseException:
-            res = "Ошибка."
+                text = "🏆 <b>ТОП-10 ПО ЗВЁЗДАМ:</b>\n\n"
+                for i, row in enumerate(rows, 1):
+                    username, stars, ref_count = row
+                    level = get_level_info(int(ref_count or 0))
+                    text += f"{i}. {display_username(username)} — {stars} ⭐ {level['emoji']}\n"
 
-        kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
-        await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+        except Exception:
+            text = "Ошибка загрузки лидерборда."
 
-    elif data == "winners_list":
-        await query.answer()
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT username, win_date FROM winners ORDER BY win_date DESC LIMIT 15"
-                    )
-                    rows = cur.fetchall()
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+            ),
+        )
 
-            if not rows:
-                res = "📜 Список победителей пока пуст."
-            else:
-                res = "🏅 <b>ПОСЛЕДНИЕ 15 ПОБЕДИТЕЛЕЙ:</b>\n\n"
-                for i, r in enumerate(rows, 1):
-                    safe_name = display_username(r[0])
-                    date_str = r[1].strftime("%d.%m.%Y") if r[1] else "-"
-                    res += f"{i}. <b>{safe_name}</b> ({date_str})\n"
-        except BaseException:
-            res = "Ошибка."
-
-        kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
-        await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
-
-
-FAQ_CB = "faq"
 
 async def faq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
     await query.edit_message_text(
         FAQ_TEXT,
-        reply_markup=InlineKeyboardMarkup(kb),
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+        ),
     )
 
 
-# --- АДМИНКА ---
+async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    uid = update.effective_user.id
+    first_name = update.effective_user.first_name
+
+    if text == "👤 Профиль":
+        await show_profile(update.message, uid, first_name, context)
+
+    elif text == "🔄 Обмен звёзд":
+        state = await get_user_state(uid, context)
+        await update.message.reply_text(
+            f"🔄 <b>Обмен звёзд</b>\n\n⭐ Ваш баланс: <b>{state['stars']}</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_exchange_inline(),
+        )
+
+    elif text == "🔗 Моя ссылка":
+        link = f"https://t.me/{BOT_USERNAME_FOR_REFLINK}?start={uid}"
+        await update.message.reply_text(
+            f"🔗 <b>Ваша ссылка:</b>\n<code>{link}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    elif text == "📚 FAQ":
+        await update.message.reply_text(
+            FAQ_TEXT,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -741,7 +981,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(uid, msg)
                 count += 1
                 await asyncio.sleep(0.05)
-            except BaseException:
+            except Exception:
                 pass
 
         await update.message.reply_text(f"✅ Доставлено: {count}")
@@ -754,40 +994,62 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        season_id, season_start, season_end = get_active_season()
-
         with get_db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM users")
                 total_users = cur.fetchone()[0]
 
-                cur.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM users
-                    WHERE tickets > 0 AND all_subscribed = 1
-                    """
-                )
-                active_participants = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM users WHERE COALESCE(all_subscribed,0)=1")
+                subscribed_users = cur.fetchone()[0]
 
                 cur.execute("SELECT COALESCE(SUM(tickets),0) FROM users")
-                total_tickets = cur.fetchone()[0] or 0
+                total_stars = cur.fetchone()[0] or 0
+
+                cur.execute("SELECT COUNT(*) FROM users WHERE COALESCE(activated,FALSE)=TRUE")
+                activated_users = cur.fetchone()[0]
 
         text = (
             f"📊 <b>СТАТИСТИКА БОТА:</b>\n\n"
-            f"🗓 <b>Сезон:</b> {
-                season_start.strftime('%d.%m.%Y')} — {
-                season_end.strftime('%d.%m.%Y')}\n"
             f"👥 <b>Всего пользователей:</b> {total_users}\n"
-            f"✅ <b>Активных участников (subscribed + tickets>0):</b> {active_participants}\n"
-            f"🎫 <b>Всего билетов в игре (сезонный баланс):</b> {total_tickets}\n"
+            f"✅ <b>Подписаны на спонсоров:</b> {subscribed_users}\n"
+            f"🚀 <b>Активировали колесо:</b> {activated_users}\n"
+            f"⭐ <b>Всего звёзд в системе:</b> {total_stars}\n"
         )
         await update.message.reply_text(text, parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики: {e}")
 
 
-async def stop_giveaway(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def weekly_bonus_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMINS:
+        return
+
+    success_count = 0
+    skipped_count = 0
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM users")
+                users = [row[0] for row in cur.fetchall()]
+
+        for user_id in users:
+            ok, _ = await process_weekly_hold_bonus(user_id, context)
+            if ok:
+                success_count += 1
+            else:
+                skipped_count += 1
+
+        await update.message.reply_text(
+            f"✅ Недельный бонус обработан.\n"
+            f"Начислено: {success_count}\n"
+            f"Пропущено: {skipped_count}"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка начисления бонусов: {e}")
+
+
+async def stop_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMINS:
         return
     global IS_ACTIVE
@@ -795,267 +1057,12 @@ async def stop_giveaway(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⛔️ <b>ПАУЗА</b>", parse_mode=ParseMode.HTML)
 
 
-async def resume_giveaway(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def resume_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMINS:
         return
     global IS_ACTIVE
     IS_ACTIVE = True
-    await update.message.reply_text("▶️ <b>СТАРТ</b>", parse_mode=ParseMode.HTML)
-
-async def reset_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Перезапуск сезона на 7 дней (активация навсегда):
-    - закрываем все активные сезоны (end_at = now)
-    - создаём новый сезон (start_at=now, end_at=now+7 days)
-    - всем пользователям обнуляем только сезонные поля и ставим новый season_id
-    """
-    if update.effective_user.id not in ADMINS:
-        return
-
-    now = utcnow()
-    new_end = now + timedelta(days=7)
-
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                # 0) закрыть все сезоны, которые ещё активны
-                cur.execute(
-                    "UPDATE seasons SET end_at=%s WHERE end_at > %s",
-                    (now, now),
-                )
-
-                # 1) создать новый сезон
-                cur.execute(
-                    "INSERT INTO seasons (start_at, end_at) VALUES (%s, %s) RETURNING id",
-                    (now, new_end),
-                )
-                new_season_id = cur.fetchone()[0]
-
-                # 2) сбросить всем только сезонные данные и привязать к новому сезону
-                cur.execute(
-                    """
-                    UPDATE users
-                    SET
-                      season_id = %s,
-                      tickets = 0,
-                      season_ref_tickets = 0,
-                      season_bonus_tickets = 0,
-                      last_fortune_time = NULL
-                    """,
-                    (new_season_id,),
-                )
-
-                conn.commit()
-
-        await update.message.reply_text(
-            "✅ <b>Сезон перезапущен на 7 дней!</b>\n"
-            f"Новый сезон до: <b>{new_end.strftime('%d.%m.%Y %H:%M')} UTC</b>",
-            parse_mode=ParseMode.HTML,
-        )
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
-
-# --- Колесо фортуны: обработка данных WebApp ---
-async def handle_webapp_data(
-        update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    now = utcnow()
-
-    try:
-        data_str = update.effective_message.web_app_data.data
-        parsed_data = json.loads(data_str)
-
-        if parsed_data.get("action") != "spin_result":
-            return
-
-        # антидубликаты: уникальный id спина (присылается из WebApp)
-        spin_id = parsed_data.get("spin_id")
-        if not spin_id:
-            await update.effective_message.reply_text("❌ Ошибка: нет spin_id. Обновите колесо и попробуйте снова.")
-            return
-
-        prize_code = parsed_data.get("prize")
-
-        prize_to_tickets = {
-            "ticket_1": 1,
-            "ticket_2": 2,
-            "ticket_3": 3,
-            "ticket_4": 4,
-            "ticket_5": 5,
-        }
-
-        add_tickets = prize_to_tickets.get(prize_code, 0)
-
-        if prize_code == "nothing":
-            prize_text = "Увы, сектор «Ничего». Попробуй через 6 часов."
-        elif add_tickets > 0:
-            prize_text = f"🎉 Вы выиграли: <b>+{add_tickets} билет(ов)</b>!"
-        else:
-            prize_text = "❌ Неизвестный приз. Обновите колесо и попробуйте снова."
-
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                # 1) фиксируем spin_id; если уже был — это повторная отправка,
-                # просто игнорируем
-                cur.execute(
-                    """
-                    INSERT INTO fortune_spins (spin_id, user_id, prize_code, created_at)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (spin_id) DO NOTHING
-                    """,
-                    (spin_id, user_id, str(prize_code), now),
-                )
-                if cur.rowcount == 0:
-                    return
-
-                # 2) проверяем кулдаун
-                cur.execute(
-                    "SELECT last_fortune_time FROM users WHERE user_id=%s", (user_id,))
-                row = cur.fetchone()
-                last_spin_time = row[0] if row else None
-
-                # ВАЖНО: не делаем last_spin_time timezone-aware.
-                last_spin_time = to_naive_utc(last_spin_time)
-
-                if last_spin_time:
-                    delta = now - last_spin_time
-                    if delta < timedelta(hours=6):
-                        seconds_left = int(
-                            timedelta(
-                                hours=6).total_seconds() -
-                            delta.total_seconds())
-                        h_left = seconds_left // 3600
-                        m_left = (seconds_left % 3600) // 60
-                        await update.effective_message.reply_text(
-                            f"⏳ Колесо заряжается! Ждите {h_left}ч {m_left}м.",
-                            parse_mode=ParseMode.HTML,
-                        )
-                        return
-
-                # 3) начисление / фиксация времени
-                if add_tickets > 0:
-                    cur.execute(
-                        """
-                        UPDATE users
-                        SET tickets = COALESCE(tickets,0) + %s,
-                            season_bonus_tickets = COALESCE(season_bonus_tickets,0) + %s,
-                            last_fortune_time = %s
-                        WHERE user_id = %s
-                        """,
-                        (add_tickets, add_tickets, now, user_id),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        UPDATE users
-                        SET last_fortune_time = %s
-                        WHERE user_id = %s
-                        """,
-                        (now, user_id),
-                    )
-
-                conn.commit()
-
-        await update.effective_message.reply_text(prize_text, parse_mode=ParseMode.HTML)
-
-    except Exception as e:
-        await update.effective_message.reply_text("❌ Ошибка обработки приза. Напишите админу.")
-        import traceback
-        print("Ошибка WebApp:", e)
-        print(traceback.format_exc())
-
-# --- DRAW (2 победителя) ---
-
-
-async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMINS:
-        return
-
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT user_id, username, tickets
-                    FROM users
-                    WHERE tickets > 0 AND all_subscribed = 1
-                    """
-                )
-                rows = cur.fetchall()
-
-        if len(rows) < 2:
-            await update.message.reply_text(
-                f"❌ Недостаточно участников для выбора 2 победителей (нужно минимум 2, сейчас: {
-                    len(rows)})."
-            )
-            return
-
-        pool = []
-        for r in rows:
-            pool.extend([r] * int(r[2]))
-
-        if len(pool) < 2:
-            await update.message.reply_text("❌ Недостаточно билетов для двух победителей.")
-            return
-
-        winner1 = random.choice(pool)
-        pool2 = [p for p in pool if p[0] != winner1[0]]
-        if not pool2:
-            await update.message.reply_text("⚠️ Все билеты у одного участника. Второй победитель невозможен.")
-            return
-        winner2 = random.choice(pool2)
-
-        winners = [winner1, winner2]
-
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    for wid, wname, wtickets in winners:
-                        cur.execute(
-                            "INSERT INTO winners (user_id, username, prize) VALUES (%s, %s, %s)",
-                            (wid, wname, PRIZE),
-                        )
-                    conn.commit()
-        except Exception as e:
-            print(f"Ошибка сохранения победителей: {e}")
-
-        result_msg = "🎉 <b>ПОБЕДИТЕЛИ РОЗЫГРЫША:</b>\n\n"
-        for i, (wid, wname, wtickets) in enumerate(winners, 1):
-            safe = f"@{wname}" if wname else "Нет ника"
-            result_msg += f"{i}. {safe} (ID: <code>{wid}</code>) — {wtickets} 🎫\n"
-
-        await update.message.reply_text(result_msg, parse_mode=ParseMode.HTML)
-
-        win_msg = (
-            f"🎉 <b>ПОЗДРАВЛЯЕМ! ВЫ ВЫИГРАЛИ!</b>\n\n"
-            f"Приз: <b>{PRIZE}</b>\n\n"
-            f"❗️ Свяжитесь с администратором для получения приза.\n"
-            f"👉 <b>Написать:</b> @moderatorgive_bot\n\n"
-            f"⏳ <b>Важно:</b> 48 часов на связь."
-        )
-
-        success_count = 0
-        for wid, _, _ in winners:
-            try:
-                await context.bot.send_message(wid, win_msg, parse_mode=ParseMode.HTML)
-                success_count += 1
-            except BaseException:
-                pass
-
-        await update.message.reply_text(f"✅ ЛС отправлено {success_count} из 2 победителям.")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка в /draw: {e}")
-        import traceback
-        print(traceback.format_exc())
-
-
-async def fortune(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Жми на кнопку ниже и лови призы!",
-        reply_markup=get_fortune_shortcut(update.effective_user.id),
-    )
+    await update.message.reply_text("▶️ <b>БОТ АКТИВЕН</b>", parse_mode=ParseMode.HTML)
 
 
 def main():
@@ -1064,21 +1071,15 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("weekly_bonus", weekly_bonus_all))
+    app.add_handler(CommandHandler("stop", stop_bot))
+    app.add_handler(CommandHandler("resume", resume_bot))
+
     app.add_handler(CallbackQueryHandler(faq_callback, pattern="^faq$"))
     app.add_handler(CallbackQueryHandler(button_handler))
-
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("draw", draw))
-    app.add_handler(CommandHandler("stop", stop_giveaway))
-    app.add_handler(CommandHandler("resume", resume_giveaway))
-    app.add_handler(CommandHandler("reset_season", reset_season))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("fortune", fortune))
-
-    app.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.WEB_APP_DATA,
-            handle_webapp_data))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_menu_handler))
 
     print("Бот запущен...")
     app.run_polling()
