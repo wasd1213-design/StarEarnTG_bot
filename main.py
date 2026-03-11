@@ -1211,6 +1211,213 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     order_id = int(cur.fetchone()[0])
 
                     cur.execute(
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        if not IS_ACTIVE:
+            await query.edit_message_text("⛔️ Бот временно на паузе.", parse_mode=ParseMode.HTML)
+            return
+
+        uid = query.from_user.id
+        data = query.data
+
+        if data in ("check_sub", "back_to_main"):
+            await count_valid_refs(uid, context)
+            await recount_temp_order_progress(context)
+            text = await get_start_text(uid, query.from_user.first_name, context)
+
+            try:
+                await query.edit_message_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=get_main_inline(),
+                )
+            except Exception as e:
+                if "not modified" in str(e).lower():
+                    pass
+                else:
+                    raise e
+
+        elif data == "profile":
+            await show_profile(query, uid, query.from_user.first_name, context, edit=True)
+
+        elif data == "exchange":
+            state = await get_user_state(uid, context)
+            text = (
+                f"🔄 <b>Обмен звёзд</b>\n"
+                f"⭐ Ваш баланс: <b>{state['stars']}</b>\n"
+                f"Выберите нужное действие:"
+            )
+            try:
+                await query.edit_message_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=get_exchange_inline(),
+                )
+            except Exception as e:
+                if "not modified" in str(e).lower():
+                    pass
+                else:
+                    raise e
+
+        elif data == "exchange_premium":
+            state = await get_user_state(uid, context)
+
+            if state["stars"] < PREMIUM_COST:
+                await query.edit_message_text(
+                    "❌ <b>Недостаточно звёзд</b>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                    ),
+                )
+                return
+
+            if state["level"]["name"] != "VIP":
+                await query.edit_message_text(
+                    "❌ <b>Доступно только для VIP-уровня Звёздного Колеса!</b>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                    ),
+                )
+                return
+
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE users SET tickets = tickets - %s WHERE user_id = %s RETURNING tickets",
+                        (PREMIUM_COST, uid),
+                    )
+                    new_balance = int(cur.fetchone()[0])
+
+                    cur.execute(
+                        """
+                        INSERT INTO exchange_requests (user_id, username, exchange_type, stars_amount)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (uid, query.from_user.username, "premium_3m", PREMIUM_COST),
+                    )
+                    conn.commit()
+
+            await notify_admins(
+                context,
+                (
+                    f"💎 <b>Новая заявка на Telegram Premium 3 мес</b>\n\n"
+                    f"👤 Пользователь: {display_username(query.from_user.username)}\n"
+                    f"🆔 ID: <code>{uid}</code>\n"
+                    f"⭐ Списано: <b>{PREMIUM_COST}</b>\n"
+                    f"💰 Остаток: <b>{new_balance}</b>"
+                ),
+            )
+
+            await query.edit_message_text(
+                "✅ Заявка на Telegram Premium создана. Администратор получил уведомление.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                ),
+            )
+
+        elif data == "exchange_withdraw":
+            state = await get_user_state(uid, context)
+
+            if state["stars"] < WITHDRAW_MIN:
+                await query.edit_message_text(
+                    f"❌ <b>Недостаточно звёзд</b>\nМинимум для вывода: <b>{WITHDRAW_MIN} ⭐</b>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                    ),
+                )
+                return
+
+            if state["level"]["name"] != "VIP":
+                await query.edit_message_text(
+                    "❌ <b>Доступно только для VIP-уровня Звёздного Колеса!</b>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                    ),
+                )
+                return
+
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE users SET tickets = tickets - %s WHERE user_id = %s RETURNING tickets",
+                        (WITHDRAW_MIN, uid),
+                    )
+                    new_balance = int(cur.fetchone()[0])
+
+                    cur.execute(
+                        """
+                        INSERT INTO exchange_requests (user_id, username, exchange_type, stars_amount)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (uid, query.from_user.username, "withdraw", WITHDRAW_MIN),
+                    )
+                    conn.commit()
+
+            await notify_admins(
+                context,
+                (
+                    f"💸 <b>Новая заявка на вывод звёзд</b>\n\n"
+                    f"👤 Пользователь: {display_username(query.from_user.username)}\n"
+                    f"🆔 ID: <code>{uid}</code>\n"
+                    f"⭐ Списано: <b>{WITHDRAW_MIN}</b>\n"
+                    f"💰 Остаток: <b>{new_balance}</b>"
+                ),
+            )
+
+            await query.edit_message_text(
+                "✅ Заявка на вывод создана. Администратор получил уведомление.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                ),
+            )
+
+        elif data in ("exchange_promo", "exchange_promo_priority"):
+            stars_cost = CHANNEL_PROMO_COST if data == "exchange_promo" else CHANNEL_PROMO_PRIORITY_COST
+            priority_level = 0 if data == "exchange_promo" else 1
+
+            state = await get_user_state(uid, context)
+            if state["stars"] < stars_cost:
+                await query.edit_message_text(
+                    "❌ <b>Недостаточно звёзд</b>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
+                    ),
+                )
+                return
+
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE users SET tickets = tickets - %s WHERE user_id = %s RETURNING tickets",
+                        (stars_cost, uid),
+                    )
+                    new_balance = int(cur.fetchone()[0])
+
+                    cur.execute(
+                        """
+                        INSERT INTO sponsor_orders (
+                            user_id, username, target_subscribers, counted_subscribers,
+                            active_subscribers, priority_level, stars_amount, status, placed_in_slot
+                        )
+                        VALUES (%s, %s, %s, 0, 0, %s, %s, 'waiting_link', FALSE)
+                        RETURNING id
+                        """,
+                        (uid, query.from_user.username, 100, priority_level, stars_cost),
+                    )
+                    order_id = int(cur.fetchone()[0])
+
+                    cur.execute(
                         """
                         INSERT INTO exchange_requests (user_id, username, exchange_type, stars_amount)
                         VALUES (%s, %s, %s, %s)
@@ -1299,6 +1506,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         else:
             await query.edit_message_text("Неизвестное действие.")
+
     except Exception as e:
         try:
             await query.edit_message_text(f"Ошибка: {e}")
@@ -1326,7 +1534,9 @@ async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ Бот должен быть администратором указанного канала.")
                 return
         except Exception:
-            await update.message.reply_text("❌ Не удалось проверить канал. Убедитесь, что username верный и бот добавлен в админы.")
+            await update.message.reply_text(
+                "❌ Не удалось проверить канал. Убедитесь, что username верный и бот добавлен в админы."
+            )
             return
 
         with get_db_connection() as conn:
@@ -1377,46 +1587,48 @@ async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # В функции text_menu_handler:
-
-    # ... (код для Обмена и Профиля оставляем как есть, там уже есть кнопки) ...
-
     if text == "🏆 Лидерборд":
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT first_name, username, COALESCE(tickets, 0) AS stars
-                    FROM users
-                    ORDER BY stars DESC, user_id ASC
-                    LIMIT 10
-                    """
-                )
-                rows = cur.fetchall()
-                if not rows:
-                    await update.message.reply_text("Лидерборд пока пуст.")
-                    return
-                msg = "🏆 <b>Лидерборд</b>\n"
-                for i, (first_name, username, stars) in enumerate(rows, 1):
-                    name = first_name or display_username(username)
-                    msg += f"{i}. <b>{name}</b> — {stars}⭐\n"
-                
-                # ДОБАВЛЯЕМ КНОПКУ НАЗАД
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
-                ])
-                await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
-    return
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT first_name, username, COALESCE(tickets, 0) AS stars
+                        FROM users
+                        ORDER BY stars DESC, user_id ASC
+                        LIMIT 10
+                        """
+                    )
+                    rows = cur.fetchall()
+
+            if not rows:
+                await update.message.reply_text("Лидерборд пока пуст.")
+                return
+
+            msg = "🏆 <b>Лидерборд</b>\n"
+            for i, (first_name, username, stars) in enumerate(rows, 1):
+                name = first_name or display_username(username)
+                msg += f"{i}. <b>{name}</b> — {stars}⭐\n"
+
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
+            ])
+            await update.message.reply_text(
+                msg,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+        except Exception as e:
+            await update.message.reply_text(f"Ошибка: {e}")
+        return
 
     if text == "🌠 Звёздное Колесо":
-        # ДОБАВЛЕНО: Кнопка Назад
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]])
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
+        ])
         await update.message.reply_text(
             "Откройте WebApp кнопкой в меню ниже 👇",
-            reply_markup=keyboard
+            reply_markup=keyboard,
         )
         return
 
