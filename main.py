@@ -1365,6 +1365,10 @@ async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # В функции text_menu_handler:
+
+    # ... (код для Обмена и Профиля оставляем как есть, там уже есть кнопки) ...
+
     if text == "🏆 Лидерборд":
         try:
             with get_db_connection() as conn:
@@ -1378,25 +1382,27 @@ async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         """
                     )
                     rows = cur.fetchall()
-
-            if not rows:
-                await update.message.reply_text("Лидерборд пока пуст.")
-                return
-
-            msg = "🏆 <b>Лидерборд</b>\n\n"
-            for i, (first_name, username, stars) in enumerate(rows, 1):
-                name = first_name or display_username(username)
-                msg += f"{i}. <b>{name}</b> — {stars}⭐\n"
-
-            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+                    if not rows:
+                        await update.message.reply_text("Лидерборд пока пуст.")
+                        return
+                    msg = "🏆 <b>Лидерборд</b>\n"
+                    for i, (first_name, username, stars) in enumerate(rows, 1):
+                        name = first_name or display_username(username)
+                        msg += f"{i}. <b>{name}</b> — {stars}⭐\n"
+                    
+                    # ДОБАВЛЕНО: Кнопка Назад
+                    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]])
+                    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
         return
 
     if text == "🌠 Звёздное Колесо":
+        # ДОБАВЛЕНО: Кнопка Назад
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]])
         await update.message.reply_text(
-            "Откройте WebApp кнопкой в меню.",
-            reply_markup=get_reply_menu(uid),
+            "Откройте WebApp кнопкой в меню ниже 👇",
+            reply_markup=keyboard
         )
         return
 
