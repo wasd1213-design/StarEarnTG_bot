@@ -964,15 +964,6 @@ async def get_start_text(user_id, first_name, context):
     else:
         progress_text = "👑 У вас максимальный уровень\n"
 
-    cooldown_text = "✅ Можно крутить прямо сейчас"
-    if state["last_fortune_time"]:
-        delta = utcnow() - state["last_fortune_time"]
-        if delta < timedelta(hours=6):
-            seconds_left = int(timedelta(hours=6).total_seconds() - delta.total_seconds())
-            h_left = seconds_left // 3600
-            m_left = (seconds_left % 3600) // 60
-            cooldown_text = f"⏳ До следующей бесплатной крутки: {h_left}ч {m_left}м"
-
     return (
         f"👋 <b>Привет, {first_name}!</b>\n\n"
         f"🌠 <b>Добро пожаловать в Звёздное Колесо</b>\n\n"
@@ -980,12 +971,17 @@ async def get_start_text(user_id, first_name, context):
         f"{wheel_access}\n\n"
         f"⭐ <b>Ваш баланс:</b> {state['stars']}\n"
         f"🏅 <b>Ваш уровень:</b> {state['level']['emoji']} {state['level']['name']}\n"
-        f"🎯 <b>Бонус к выигрышу:</b> +{state['level']['bonus_percent']}%\n"
-        f"{progress_text}\n"
-        f"🔄 <b>Статус колеса:</b> {cooldown_text}\n"
-        f"💫 <b>Доп. вращение:</b> доступно за {EXTRA_SPIN_COST}⭐\n\n"
-        f"📌 <b>Активные спонсоры:</b>\n{state['channels_list']}\n"
+        f"🎯 <b>Бонус к выигрышу:</b> +{state['level']['bonus_percent']}%\n\n"
+        f"📈 <b>Как быстрее расти в боте:</b>\n"
+        f"• Колесо даёт базовый заработок\n"
+        f"• Основной прирост звёзд идёт через активных рефералов\n"
+        f"• Чем больше активных рефералов — тем выше ваш уровень\n"
+        f"• Чем выше уровень — тем больше выигрыш с каждого вращения\n\n"
         f"👥 <b>Активные рефералы:</b> {state['ref_count']}\n"
+        f"{progress_text}\n"
+        f"💎 <b>Самый сильный прирост даёт уровень Diamond</b> — "
+        f"там максимальный бонус к выигрышу.\n\n"
+        f"📌 <b>Активные спонсоры:</b>\n{state['channels_list']}"
     )
 
 
@@ -1047,16 +1043,40 @@ async def show_profile(query_or_update, user_id: int, first_name: str, context: 
 
     reflink = f"https://t.me/{BOT_USERNAME_FOR_REFLINK}?start={user_id}"
 
+    ref_count = state["ref_count"]
+    level_name = state["level"]["name"]
+    bonus_percent = state["level"]["bonus_percent"]
+
+    if level_name == "Bronze":
+        refs_range = "0–4 реферала"
+        next_hint = f"📈 До Silver осталось: <b>{max(0, 5 - ref_count)}</b>"
+        benefit_hint = "На Silver шанс выигрыша уже выше благодаря бонусу <b>+15%</b>."
+    elif level_name == "Silver":
+        refs_range = "5–9 рефералов"
+        next_hint = f"📈 До Gold осталось: <b>{max(0, 10 - ref_count)}</b>"
+        benefit_hint = "На Gold шанс выигрыша становится ещё лучше: бонус <b>+35%</b>."
+    elif level_name == "Gold":
+        refs_range = "10–14 рефералов"
+        next_hint = f"📈 До Diamond осталось: <b>{max(0, 15 - ref_count)}</b>"
+        benefit_hint = "💎 На Diamond шанс выигрыша заметно выше: максимальный бонус <b>+60%</b>."
+    else:
+        refs_range = "15+ рефералов"
+        next_hint = "👑 У вас максимальный уровень."
+        benefit_hint = "💎 На Diamond у вас максимальный бонус к выигрышу — <b>+60%</b>."
+
     text = (
         f"👤 <b>Профиль</b>\n\n"
         f"Имя: <b>{first_name}</b>\n"
         f"Username: <b>{display_username(me.username)}</b>\n"
         f"ID: <code>{user_id}</code>\n\n"
         f"⭐ Баланс: <b>{state['stars']}</b>\n"
-        f"🏅 Уровень: <b>{state['level']['emoji']} {state['level']['name']}</b>\n"
-        f"🎯 Бонус к выигрышу: <b>+{state['level']['bonus_percent']}%</b>\n"
+        f"🏅 Уровень: <b>{state['level']['emoji']} {level_name}</b>\n"
+        f"👥 Диапазон уровня: <b>{refs_range}</b>\n"
+        f"🎯 Бонус к выигрышу: <b>+{bonus_percent}%</b>\n"
+        f"{next_hint}\n"
+        f"{benefit_hint}\n\n"
         f"🎁 Недельных бонусов получено: <b>{state['weekly_hold_bonus_count']}/{MAX_WEEKLY_HOLD_BONUSES}</b>\n\n"
-        f"👥 Активные рефералы: <b>{state['ref_count']}</b>\n"
+        f"👥 Активные рефералы: <b>{ref_count}</b>\n"
         f"🔗 Ваша реферальная ссылка:\n<code>{reflink}</code>"
     )
 
@@ -1066,7 +1086,6 @@ async def show_profile(query_or_update, user_id: int, first_name: str, context: 
         await query_or_update.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     else:
         await query_or_update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
-
 
 async def faq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
