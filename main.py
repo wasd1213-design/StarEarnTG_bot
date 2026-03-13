@@ -345,9 +345,7 @@ def get_reply_menu(user_id: int, bonus_percent: int = 0):
 
 def get_main_inline():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")],
-        [InlineKeyboardButton("👤 Профиль", callback_data="profile")],
-        [InlineKeyboardButton("🔄 Обмен звёзд", callback_data="exchange")],
+        [InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")]
     ])
 
 
