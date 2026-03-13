@@ -102,7 +102,7 @@ async def check_subscription(user_id, channel, context):
 def get_level_info(ref_count: int):
     if ref_count >= 15:
         return {
-            "name": "VIP",
+            "name": "Diamond",
             "emoji": "🌟",
             "bonus_percent": 60,
             "next_target": None,
@@ -114,7 +114,7 @@ def get_level_info(ref_count: int):
             "emoji": "🥇",
             "bonus_percent": 35,
             "next_target": 15,
-            "next_name": "VIP",
+            "next_name": "Diamond",
         }
     if ref_count >= 5:
         return {
@@ -198,8 +198,8 @@ FAQ_TEXT = f"""
 • Максимум: <b>{MAX_WEEKLY_HOLD_BONUSES} недели</b>
 
 🔄 <b>Обмен звёзд:</b>
-• Telegram Premium 3 месяца — {PREMIUM_COST}⭐, только для VIP
-• Вывод звёзд — от {WITHDRAW_MIN}⭐, только для VIP
+• Telegram Premium 3 месяца — {PREMIUM_COST}⭐, только для Diamond
+• Вывод звёзд — от {WITHDRAW_MIN}⭐, только для Diamond
 • Ваш канал в списке спонсоров — {CHANNEL_PROMO_COST}⭐
 • Вне очереди — {CHANNEL_PROMO_PRIORITY_COST}⭐
 • Украшение профиля — {PROFILE_BADGE_COST}⭐
@@ -1069,9 +1069,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            if state["level"]["name"] != "VIP":
+            if state["level"]["name"] != "Diamond":
                 await query.edit_message_text(
-                    "❌ <b>Доступно только для VIP-уровня Звёздного Колеса!</b>",
+                    "❌ <b>Доступно только для Diamond-уровня Звёздного Колеса!</b>",
                     parse_mode=ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup(
                         [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
@@ -1128,9 +1128,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            if state["level"]["name"] != "VIP":
+            if state["level"]["name"] != "Diamond":
                 await query.edit_message_text(
-                    "❌ <b>Доступно только для VIP-уровня Звёздного Колеса!</b>",
+                    "❌ <b>Доступно только для Diamond-уровня Звёздного Колеса!</b>",
                     parse_mode=ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup(
                         [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]

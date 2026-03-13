@@ -62,7 +62,7 @@ def to_naive_utc(dt):
 def get_level_info(ref_count: int):
     if ref_count >= 15:
         return {
-            "name": "VIP",
+            "name": "Diamond",
             "emoji": "🌟",
             "bonus_percent": 60,
             "multiplier": 1.60,
@@ -94,7 +94,7 @@ def get_wheel_weights_by_level(level_name: str):
         "Bronze": 1.00,
         "Silver": 1.15,
         "Gold": 1.35,
-        "VIP": 1.60,
+        "Diamond": 1.60,
     }
 
     mult = multipliers.get(level_name, 1.00)
