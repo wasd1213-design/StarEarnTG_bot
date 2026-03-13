@@ -34,18 +34,175 @@ WEBAPP_URL = os.getenv("WEBAPP_URL")
 
 IS_ACTIVE = True
 
-START_BONUS = 5
-WEEKLY_HOLD_BONUS = 10
+START_BONUS = 20
+WEEKLY_HOLD_BONUS = 20
 MAX_WEEKLY_HOLD_BONUSES = 4
 EXTRA_SPIN_COST = 1
 
 PREMIUM_COST = 1300
 WITHDRAW_MIN = 700
 CHANNEL_PROMO_COST = 200
-CHANNEL_PROMO_PRIORITY_COST = 400
-PROFILE_BADGE_COST = 20
+CHANNEL_PROMO_PRIORITY_COST = 250
 
-FAQ_CB = "faq"
+FAQ_ITEMS = {
+    "start": {
+        "title": "🔰 Начало работы",
+        "text": (
+            "❓ <b>Как начать пользоваться ботом?</b>\n"
+            "• Нажмите /start или кнопку «🌠 Звёздное Колесо» в меню\n"
+            "• Подпишитесь на всех активных спонсоров (отмечены в профиле)\n"
+            "• Пригласите 2 активных реферала\n"
+            "• После выполнения условий доступ к Колесу активируется автоматически ✅\n\n"
+            "❓ <b>Что такое активный реферал?</b>\n"
+            "Реферал считается активным, если он:\n"
+            "• Перешёл по вашей реферальной ссылке\n"
+            "• Подписался на все основные спонсорские каналы (слоты 1 и 2)\n\n"
+            "⚠️ Временный спонсор (слот 3) не учитывается при проверке активности рефералов.\n\n"
+            "❓ <b>Где моя реферальная ссылка?</b>\n"
+            "Откройте «👤 Профиль» — внизу будет ваша персональная ссылка.\n"
+            "Копируйте и делитесь с друзьями!"
+        ),
+    },
+    "wheel": {
+        "title": "🌠 Звёздное Колесо",
+        "text": (
+            "❓ <b>Как крутить Колесо?</b>\n"
+            f"• 🎁 Бесплатно: 1 раз в 6 часов\n"
+            f"• ⭐ За звёзды: дополнительное вращение за {EXTRA_SPIN_COST} ⭐\n"
+            "• Откройте через кнопку «🌠 Звёздное Колесо» в меню или WebApp\n\n"
+            "❓ <b>Почему Колесо недоступно?</b>\n"
+            "Возможные причины:\n"
+            "• ❌ Не подписаны на спонсоров — подпишитесь на все каналы из списка\n"
+            "• ❌ Мало активных рефералов — пригласите ещё друзей\n"
+            "• ⏳ Кулдаун 6 часов — подождите или купите доп. спин\n\n"
+            "❓ <b>Как проверить статус подписок?</b>\n"
+            "Нажмите «🔄 Обновить статус» под главным сообщением или введите /start."
+        ),
+    },
+    "levels": {
+        "title": "🏅 Уровни и бонусы",
+        "text": (
+            "❓ <b>Как работают уровни?</b>\n\n"
+            "🥉 <b>Bronze</b>\n"
+            "• Активных рефералов: 0–4\n"
+            "• Бонус к выигрышу: +0%\n"
+            "• Следующий уровень: Silver (5)\n\n"
+            "🥈 <b>Silver</b>\n"
+            "• Активных рефералов: 5–9\n"
+            "• Бонус к выигрышу: +15%\n"
+            "• Следующий уровень: Gold (10)\n\n"
+            "🥇 <b>Gold</b>\n"
+            "• Активных рефералов: 10–14\n"
+            "• Бонус к выигрышу: +35%\n"
+            "• Следующий уровень: Diamond (15)\n\n"
+            "💎 <b>Diamond</b>\n"
+            "• Активных рефералов: 15+\n"
+            "• Бонус к выигрышу: +60%\n"
+            "• Максимальный уровень\n\n"
+            "🎯 Бонус применяется к выигрышам в Колесе.\n\n"
+            "❓ <b>Как получить уведомление о повышении уровня?</b>\n"
+            "Бот автоматически уведомит вас при повышении уровня.\n"
+            "Если пропустили — откройте «👤 Профиль»."
+        ),
+    },
+    "weekly": {
+        "title": "🎁 Еженедельный бонус за подписку",
+        "text": (
+            "❓ <b>Что это за бонус?</b>\n"
+            "За сохранение подписки на 2 основных спонсора вы можете получать:\n"
+            f"• 💰 <b>{WEEKLY_HOLD_BONUS} ⭐</b> в неделю\n"
+            f"• 📅 Максимум <b>{MAX_WEEKLY_HOLD_BONUSES} недели</b> "
+            f"(всего <b>{WEEKLY_HOLD_BONUS * MAX_WEEKLY_HOLD_BONUSES} ⭐</b>)\n\n"
+            "❓ <b>Почему мне не начислили бонус?</b>\n"
+            "Возможные причины:\n"
+            "• ❌ Отписались от одного из основных спонсоров\n"
+            "• ⏳ Прошло меньше 7 дней с последнего начисления\n\n"
+            "⚠️ Временный спонсор (слот 3) не влияет на этот бонус."
+        ),
+    },
+    "exchange": {
+        "title": "💱 Обмен звёзд",
+        "text": (
+            "❓ <b>На что можно потратить звёзды?</b>\n"
+            f"• 💎 Telegram Premium (3 мес) — {PREMIUM_COST} ⭐\n"
+            f"• 💸 Вывод звёзд — от {WITHDRAW_MIN} ⭐\n"
+            f"• 📢 Канал в списке спонсоров — {CHANNEL_PROMO_COST} ⭐\n"
+            f"• ⚡ Вне очереди (приоритет) — {CHANNEL_PROMO_PRIORITY_COST} ⭐\n\n"
+            "❓ <b>Как оформить заявку?</b>\n"
+            "• Откройте «🔄 Обмен звёзд»\n"
+            "• Выберите нужную опцию\n"
+            "• Подтвердите списание\n"
+            "• Заявка автоматически уйдёт администратору\n\n"
+            "❓ <b>Как вывести звёзды?</b>\n"
+            "Только для Diamond-пользователей:\n"
+            f"• Минимальная сумма: {WITHDRAW_MIN} ⭐\n"
+            "• Оформите заявку в меню «Обмен звёзд»\n"
+            "• Администратор обработает запрос вручную\n"
+            "• Звёзды будут переведены на ваш аккаунт"
+        ),
+    },
+    "sponsors": {
+        "title": "📢 Спонсорская программа",
+        "text": (
+            "❓ <b>Как разместить свой канал?</b>\n"
+            "• Откройте «🔄 Обмен звёзд» → «📢 Ваш канал в списке спонсоров»\n"
+            f"• Оплатите размещение: {CHANNEL_PROMO_COST} ⭐ (обычный) "
+            f"или {CHANNEL_PROMO_PRIORITY_COST} ⭐ (вне очереди)\n"
+            "• Отправьте боту username канала (например: @mychannel)\n"
+            "• Убедитесь, что @StarEarnTG_bot добавлен в администраторы канала\n\n"
+            "❓ <b>Как работает очередь?</b>\n"
+            "• 🎯 Цель: 100 подписчиков на ваш канал\n"
+            "• 📊 Бот отслеживает, кто подписался и остался в канале\n"
+            "• ✅ При достижении цели заказ помечается как выполненный\n"
+            "• 🔁 Освободившийся слот занимает следующий заказ из очереди\n\n"
+            "❓ <b>Что такое временный слот?</b>\n"
+            "• Слот №3 — дополнительный, для быстрых размещений\n"
+            "• Не влияет на активацию Колеса и недельные бонусы\n"
+            "• Освобождается сразу после выполнения заказа"
+        ),
+    },
+    "profile": {
+        "title": "👤 Профиль и настройки",
+        "text": (
+            "❓ <b>Что отображается в профиле?</b>\n"
+            "• 🪪 Имя, username, ID\n"
+            "• ⭐ Баланс звёзд\n"
+            "• 🏅 Текущий уровень и бонус\n"
+            "• 🎁 Количество полученных недельных бонусов\n"
+            "• 👥 Количество активных рефералов\n"
+            "• 🔗 Ваша реферальная ссылка\n"
+            "• 🏆 Лидерборд"
+        ),
+    },
+    "leaderboard": {
+        "title": "🏆 Лидерборд",
+        "text": (
+            "❓ <b>Как попасть в топ?</b>\n"
+            "Лидерборд ранжирует пользователей по балансу звёзд:\n"
+            "• Откройте «🏆 Лидерборд» в меню\n"
+            "• Топ-10 отображаются с указанием имени и количества звёзд\n"
+            "• Обновляется в реальном времени\n\n"
+            "💡 Совет: активно приглашайте рефералов и участвуйте в активностях, "
+            "чтобы увеличить баланс!"
+        ),
+    },
+    "problems": {
+        "title": "❓ Частые проблемы",
+        "text": (
+            "❌ <b>Недостаточно звёзд</b>\n"
+            "• Проверьте баланс в «👤 Профиль»\n"
+            "• Заработайте больше: крутите Колесо, приглашайте друзей, получайте недельные бонусы\n\n"
+            "❌ <b>Бот не является администратором канала</b>\n"
+            "• Добавьте @StarEarnTG_bot в администраторы вашего канала\n"
+            "• Дайте права: «Публикация сообщений» + «Приглашение пользователей»\n"
+            "• Повторите отправку username\n\n"
+            "❌ <b>Звёздное Колесо недоступно</b>\n"
+            "• Проверьте подписки на спонсоров\n"
+            "• Убедитесь, что у вас ≥ 2 активных реферала\n"
+            "• Нажмите «🔄 Обновить статус»"
+        ),
+    },
+}
 
 
 def get_db_connection():
@@ -83,6 +240,37 @@ def normalize_channel_username(channel: str) -> str:
     return channel
 
 
+def get_faq_keyboard():
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔰 Начало работы", callback_data="faq:start")],
+            [InlineKeyboardButton("🌠 Звёздное Колесо", callback_data="faq:wheel")],
+            [InlineKeyboardButton("🏅 Уровни и бонусы", callback_data="faq:levels")],
+            [InlineKeyboardButton("🎁 Еженедельный бонус", callback_data="faq:weekly")],
+            [InlineKeyboardButton("💱 Обмен звёзд", callback_data="faq:exchange")],
+            [InlineKeyboardButton("📢 Спонсорская программа", callback_data="faq:sponsors")],
+            [InlineKeyboardButton("👤 Профиль", callback_data="faq:profile")],
+            [InlineKeyboardButton("🏆 Лидерборд", callback_data="faq:leaderboard")],
+            [InlineKeyboardButton("❓ Частые проблемы", callback_data="faq:problems")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")],
+        ]
+    )
+
+
+def build_faq_text(selected_key=None):
+    text = (
+        "📚 <b>FAQ — Звёздное Колесо</b>\n"
+        "Полное руководство по использованию бота.\n"
+        "Сохраните себе или поделитесь с рефералами!"
+    )
+
+    if selected_key and selected_key in FAQ_ITEMS:
+        item = FAQ_ITEMS[selected_key]
+        text += f"\n\n{item['title']}\n\n{item['text']}"
+
+    return text
+
+
 async def notify_admins(context: ContextTypes.DEFAULT_TYPE, text: str):
     for admin_id in ADMINS:
         try:
@@ -103,7 +291,7 @@ def get_level_info(ref_count: int):
     if ref_count >= 15:
         return {
             "name": "Diamond",
-            "emoji": "🌟",
+            "emoji": "💎",
             "bonus_percent": 60,
             "next_target": None,
             "next_name": None,
@@ -133,21 +321,21 @@ def get_level_info(ref_count: int):
     }
 
 
-def get_reply_menu(user_id: int):
+def get_reply_menu(user_id: int, bonus_percent: int = 0):
     return ReplyKeyboardMarkup(
         [
             [
                 KeyboardButton(
-                    "🌠 Звёздное Колесо",
+                    f"🌠 Звёздное Колесо (+{bonus_percent}% к выигрышу)",
                     web_app=WebAppInfo(url=f"{WEBAPP_URL}?user_id={user_id}"),
                 ),
+            ],
+            [
                 KeyboardButton("👤 Профиль"),
-            ],
-            [
                 KeyboardButton("🔄 Обмен звёзд"),
-                KeyboardButton("🏆 Лидерборд"),
             ],
             [
+                KeyboardButton("🏆 Лидерборд"),
                 KeyboardButton("📚 FAQ"),
             ],
         ],
@@ -156,9 +344,10 @@ def get_reply_menu(user_id: int):
 
 
 def get_main_inline():
-    """Только кнопка обновления для главного экрана"""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")]
+        [InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")],
+        [InlineKeyboardButton("👤 Профиль", callback_data="profile")],
+        [InlineKeyboardButton("🔄 Обмен звёзд", callback_data="exchange")],
     ])
 
 
@@ -169,43 +358,9 @@ def get_exchange_inline():
             [InlineKeyboardButton("💸 Вывод звёзд", callback_data="exchange_withdraw")],
             [InlineKeyboardButton(f"📢 Ваш канал в списке спонсоров — {CHANNEL_PROMO_COST} ⭐", callback_data="exchange_promo")],
             [InlineKeyboardButton(f"⚡ Вне очереди — {CHANNEL_PROMO_PRIORITY_COST} ⭐", callback_data="exchange_promo_priority")],
-            [InlineKeyboardButton(f"🏅 Украшение профиля — {PROFILE_BADGE_COST} ⭐", callback_data="exchange_badge")],
             [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")],
         ]
     )
-
-
-FAQ_TEXT = f"""
-📚 <b>FAQ — Звёздное Колесо</b>
-
-🌠 <b>Как получить доступ к Звёздному Колесу?</b>
-1. Подпишитесь на всех активных спонсоров
-2. Пригласите 2 активных реферала
-
-⚠️ <b>Важно:</b> еженедельный бонус за удержание подписки проверяется только по основным спонсорам.
-Временный пользовательский 3-й слот на недельный бонус не влияет.
-
-⭐ <b>Как получать звёзды?</b>
-• Бесплатно крутить Звёздное Колесо — 1 раз в 6 часов
-• Купить дополнительный спин за {EXTRA_SPIN_COST}⭐
-• Получать еженедельный бонус за сохранение подписки на основных спонсоров
-• Приглашать друзей и повышать уровень
-
-🎁 <b>Еженедельный бонус:</b>
-• Начисляется командой администратора /weekly_bonus
-• Учитываются только 2 основных спонсора
-• Размер бонуса: <b>{WEEKLY_HOLD_BONUS}⭐</b>
-• Максимум: <b>{MAX_WEEKLY_HOLD_BONUSES} недели</b>
-
-🔄 <b>Обмен звёзд:</b>
-• Telegram Premium 3 месяца — {PREMIUM_COST}⭐, только для Diamond
-• Вывод звёзд — от {WITHDRAW_MIN}⭐, только для Diamond
-• Ваш канал в списке спонсоров — {CHANNEL_PROMO_COST}⭐
-• Вне очереди — {CHANNEL_PROMO_PRIORITY_COST}⭐
-• Украшение профиля — {PROFILE_BADGE_COST}⭐
-
-❓ Поддержка: @moderatorgive_bot
-"""
 
 
 def init_db():
@@ -226,7 +381,6 @@ def init_db():
                         lifetime_ref_count INT DEFAULT 0,
                         weekly_hold_bonus_count INT DEFAULT 0,
                         last_hold_bonus_at TIMESTAMP NULL,
-                        profile_badge BOOLEAN DEFAULT FALSE,
                         last_level_notified TEXT DEFAULT 'Bronze',
                         last_seen TIMESTAMP NULL,
                         created_at TIMESTAMP DEFAULT NOW()
@@ -335,7 +489,6 @@ def init_db():
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS lifetime_ref_count INT DEFAULT 0",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_hold_bonus_count INT DEFAULT 0",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_hold_bonus_at TIMESTAMP NULL",
-                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_badge BOOLEAN DEFAULT FALSE",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_level_notified TEXT DEFAULT 'Bronze'",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP NULL",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()",
@@ -349,6 +502,11 @@ def init_db():
                         cursor.execute(stmt)
                     except Exception as e:
                         print("ALTER warning:", e)
+
+                try:
+                    cursor.execute("ALTER TABLE users DROP COLUMN IF EXISTS profile_badge")
+                except Exception as e:
+                    print("DROP COLUMN warning:", e)
 
                 cursor.execute(
                     """
@@ -621,13 +779,16 @@ async def count_valid_refs(referrer_id: int, context: ContextTypes.DEFAULT_TYPE)
                     valid_count += 1
                     continue
 
-                subscribed = False
+                if len(main_sponsors) < 2:
+                    continue
+
+                subscribed_all_main = True
                 for sponsor in main_sponsors:
-                    if await check_subscription(referred_id, sponsor["channel_username"], context):
-                        subscribed = True
+                    if not await check_subscription(referred_id, sponsor["channel_username"], context):
+                        subscribed_all_main = False
                         break
 
-                if subscribed:
+                if subscribed_all_main:
                     cur.execute(
                         """
                         UPDATE referrals
@@ -664,7 +825,7 @@ async def get_user_state(user_id: int, context: ContextTypes.DEFAULT_TYPE):
         channels_list = "Список спонсоров пока не настроен.\n"
         all_subs_ok = False
 
-    for i, sponsor in enumerate(sponsors, 1):
+    for sponsor in sponsors:
         ch = sponsor["channel_username"]
         is_sub = await check_subscription(user_id, ch, context)
 
@@ -688,13 +849,7 @@ async def get_user_state(user_id: int, context: ContextTypes.DEFAULT_TYPE):
             icon = "❌"
             all_subs_ok = False
 
-        slot_title = f"Слот {sponsor['slot_no']}"
-        if sponsor["sponsor_type"] == "main":
-            slot_title += " (основной)"
-        else:
-            slot_title += " (временный)"
-
-        channels_list += f"{i}. {ch} {icon} — {slot_title}\n"
+        channels_list += f"• {ch} {icon}\n"
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -710,7 +865,6 @@ async def get_user_state(user_id: int, context: ContextTypes.DEFAULT_TYPE):
                     COALESCE(tickets, 0),
                     COALESCE(weekly_hold_bonus_count, 0),
                     last_fortune_time,
-                    COALESCE(profile_badge, FALSE),
                     COALESCE(last_level_notified, 'Bronze')
                 FROM users
                 WHERE user_id = %s
@@ -725,7 +879,6 @@ async def get_user_state(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     stars = 0
     weekly_hold_bonus_count = 0
     last_fortune_time = None
-    profile_badge = False
     last_level_notified = "Bronze"
 
     if row:
@@ -735,7 +888,6 @@ async def get_user_state(user_id: int, context: ContextTypes.DEFAULT_TYPE):
             stars,
             weekly_hold_bonus_count,
             last_fortune_time,
-            profile_badge,
             last_level_notified,
         ) = row
 
@@ -749,10 +901,10 @@ async def get_user_state(user_id: int, context: ContextTypes.DEFAULT_TYPE):
         "stars": stars,
         "weekly_hold_bonus_count": weekly_hold_bonus_count,
         "last_fortune_time": to_naive_utc(last_fortune_time),
-        "profile_badge": profile_badge,
         "level": level,
         "last_level_notified": last_level_notified,
     }
+
 
 async def notify_level_up_if_needed(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -780,7 +932,7 @@ async def notify_level_up_if_needed(user_id: int, context: ContextTypes.DEFAULT_
                         text=(
                             f"🎉 <b>Поздравляем!</b>\n\n"
                             f"Ваш уровень повышен до <b>{state['level']['emoji']} {current_level}</b>\n"
-                            f"🌠 <b>Звёздное Колесо:</b> +{state['level']['bonus_percent']}%"
+                            f"🌠 <b>Бонус к выигрышу:</b> +{state['level']['bonus_percent']}%"
                         ),
                         parse_mode=ParseMode.HTML,
                     )
@@ -830,7 +982,7 @@ async def get_start_text(user_id, first_name, context):
         f"{wheel_access}\n\n"
         f"⭐ <b>Ваш баланс:</b> {state['stars']}\n"
         f"🏅 <b>Ваш уровень:</b> {state['level']['emoji']} {state['level']['name']}\n"
-        f"🌠 <b>Звёздное Колесо:</b> +{state['level']['bonus_percent']}%\n"
+        f"🎯 <b>Бонус к выигрышу:</b> +{state['level']['bonus_percent']}%\n"
         f"{progress_text}\n"
         f"🔄 <b>Статус колеса:</b> {cooldown_text}\n"
         f"💫 <b>Доп. вращение:</b> доступно за {EXTRA_SPIN_COST}⭐\n\n"
@@ -897,8 +1049,6 @@ async def show_profile(query_or_update, user_id: int, first_name: str, context: 
 
     reflink = f"https://t.me/{BOT_USERNAME_FOR_REFLINK}?start={user_id}"
 
-    badge_text = "🏅 Есть" if state["profile_badge"] else "—"
-
     text = (
         f"👤 <b>Профиль</b>\n\n"
         f"Имя: <b>{first_name}</b>\n"
@@ -906,9 +1056,8 @@ async def show_profile(query_or_update, user_id: int, first_name: str, context: 
         f"ID: <code>{user_id}</code>\n\n"
         f"⭐ Баланс: <b>{state['stars']}</b>\n"
         f"🏅 Уровень: <b>{state['level']['emoji']} {state['level']['name']}</b>\n"
-        f"🌠 Бонус к колесу: <b>+{state['level']['bonus_percent']}%</b>\n"
-        f"🎁 Недельных бонусов получено: <b>{state['weekly_hold_bonus_count']}/{MAX_WEEKLY_HOLD_BONUSES}</b>\n"
-        f"Украшение профиля: <b>{badge_text}</b>\n\n"
+        f"🎯 Бонус к выигрышу: <b>+{state['level']['bonus_percent']}%</b>\n"
+        f"🎁 Недельных бонусов получено: <b>{state['weekly_hold_bonus_count']}/{MAX_WEEKLY_HOLD_BONUSES}</b>\n\n"
         f"👥 Активные рефералы: <b>{state['ref_count']}</b>\n"
         f"🔗 Ваша реферальная ссылка:\n<code>{reflink}</code>"
     )
@@ -924,10 +1073,15 @@ async def show_profile(query_or_update, user_id: int, first_name: str, context: 
 async def faq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    selected_key = None
+    if query.data.startswith("faq:"):
+        selected_key = query.data.split(":", 1)[1]
+
     await query.edit_message_text(
-        FAQ_TEXT,
+        build_faq_text(selected_key),
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]),
+        reply_markup=get_faq_keyboard(),
     )
 
 
@@ -994,6 +1148,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await notify_level_up_if_needed(referrer_id, context)
 
     text = await get_start_text(user_id, first_name, context)
+    state = await get_user_state(user_id, context)
+
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.HTML,
@@ -1001,7 +1157,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(
         "Выберите действие из меню ниже 👇",
-        reply_markup=get_reply_menu(user_id),
+        reply_markup=get_reply_menu(user_id, state["level"]["bonus_percent"]),
     )
 
 
@@ -1251,52 +1407,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ),
             )
 
-        elif data == "exchange_badge":
-            state = await get_user_state(uid, context)
-
-            if state["profile_badge"]:
-                await query.edit_message_text(
-                    "ℹ️ <b>Украшение профиля уже активно.</b>",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
-                    ),
-                )
-                return
-
-            if state["stars"] < PROFILE_BADGE_COST:
-                await query.edit_message_text(
-                    "❌ <b>Недостаточно звёзд</b>",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
-                    ),
-                )
-                return
-
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE users
-                        SET tickets = tickets - %s,
-                            profile_badge = TRUE
-                        WHERE user_id = %s
-                        RETURNING tickets
-                        """,
-                        (PROFILE_BADGE_COST, uid),
-                    )
-                    new_balance = int(cur.fetchone()[0])
-                    conn.commit()
-
-            await query.edit_message_text(
-                f"✅ <b>Украшение профиля активировано</b>\n\n💰 Остаток: <b>{new_balance}</b>",
-                parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔙 Назад", callback_data="exchange")]]
-                ),
-            )
-
         else:
             await query.edit_message_text("Неизвестное действие.")
 
@@ -1359,11 +1469,9 @@ async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "📚 FAQ":
         await update.message.reply_text(
-            FAQ_TEXT,
+            build_faq_text(),
             parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
-            ),
+            reply_markup=get_faq_keyboard(),
         )
         return
 
@@ -1415,7 +1523,7 @@ async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Ошибка: {e}")
         return
 
-    if text == "🌠 Звёздное Колесо":
+    if text.startswith("🌠 Звёздное Колесо"):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
         ])
@@ -1733,7 +1841,7 @@ def main():
     app.add_handler(CommandHandler("remove_temp_sponsor", remove_temp_sponsor_cmd))
     app.add_handler(CommandHandler("check_sponsor_progress", check_sponsor_progress_cmd))
 
-    app.add_handler(CallbackQueryHandler(faq_callback, pattern="^faq$"))
+    app.add_handler(CallbackQueryHandler(faq_callback, pattern=r"^faq:"))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_menu_handler))
 
