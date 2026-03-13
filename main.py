@@ -1078,11 +1078,17 @@ async def faq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data.startswith("faq:"):
         selected_key = query.data.split(":", 1)[1]
 
-    await query.edit_message_text(
-        build_faq_text(selected_key),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_faq_keyboard(),
-    )
+    try:
+        await query.edit_message_text(
+            build_faq_text(selected_key),
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_faq_keyboard(),
+        )
+    except Exception as e:
+        if "not modified" in str(e).lower():
+            pass
+        else:
+            raise e
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
