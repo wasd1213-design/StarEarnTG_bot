@@ -240,6 +240,37 @@ def normalize_channel_username(channel: str) -> str:
     return channel
 
 
+def get_faq_keyboard():
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔰 Начало работы", callback_data="faq:start")],
+            [InlineKeyboardButton("🌠 Звёздное Колесо", callback_data="faq:wheel")],
+            [InlineKeyboardButton("🏅 Уровни и бонусы", callback_data="faq:levels")],
+            [InlineKeyboardButton("🎁 Еженедельный бонус", callback_data="faq:weekly")],
+            [InlineKeyboardButton("💱 Обмен звёзд", callback_data="faq:exchange")],
+            [InlineKeyboardButton("📢 Спонсорская программа", callback_data="faq:sponsors")],
+            [InlineKeyboardButton("👤 Профиль", callback_data="faq:profile")],
+            [InlineKeyboardButton("🏆 Лидерборд", callback_data="faq:leaderboard")],
+            [InlineKeyboardButton("❓ Частые проблемы", callback_data="faq:problems")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")],
+        ]
+    )
+
+
+def build_faq_text(selected_key=None):
+    text = (
+        "📚 <b>FAQ — Звёздное Колесо</b>\n"
+        "Полное руководство по использованию бота.\n"
+        "Сохраните себе или поделитесь с другами!"
+    )
+
+    if selected_key and selected_key in FAQ_ITEMS:
+        item = FAQ_ITEMS[selected_key]
+        text += f"\n\n{item['title']}\n\n{item['text']}"
+
+    return text
+
+
 async def notify_admins(context: ContextTypes.DEFAULT_TYPE, text: str):
     for admin_id in ADMINS:
         try:
@@ -288,6 +319,28 @@ def get_level_info(ref_count: int):
         "next_target": 5,
         "next_name": "Silver",
     }
+
+
+def get_reply_menu(user_id: int, bonus_percent: int = 0):
+    return ReplyKeyboardMarkup(
+        [
+            [
+                KeyboardButton(
+                    f"🌠 Звёздное Колесо (+{bonus_percent}% к выигрышу)",
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}?user_id={user_id}&v=2"),
+                ),
+            ],
+            [
+                KeyboardButton("👤 Профиль"),
+                KeyboardButton("🔄 Обмен звёзд"),
+            ],
+            [
+                KeyboardButton("🏆 Лидерборд"),
+                KeyboardButton("📚 FAQ"),
+            ],
+        ],
+        resize_keyboard=True,
+    )
 
 
 def get_main_inline():
@@ -886,6 +939,7 @@ async def notify_level_up_if_needed(user_id: int, context: ContextTypes.DEFAULT_
         print("notify_level_up_if_needed error:", e)
 
 
+
 async def apply_inactivity_decay(user_id: int, context):
     now = utcnow()
 
@@ -943,6 +997,53 @@ async def apply_inactivity_decay(user_id: int, context):
     return await asyncio.to_thread(_apply)
 
 
+async def get_start_text(user_id, first_name, context):
+    state = await get_user_state(user_id, context)
+
+    activation_text = (
+        "✅ <b>Доступ к колесу активирован</b>\n"
+        if state["activated"]
+        else "⚠️ <b>Для открытия колеса пригласите 2 активных друга</b>\n"
+    )
+
+    if not state["all_subs_ok"]:
+        wheel_access = "❌ <b>Звёздное Колесо недоступно: подпишитесь на всех активных спонсоров</b>"
+    elif not state["activated"]:
+        wheel_access = "❌ <b>Звёздное Колесо недоступно: не хватает 2 активных друзей</b>"
+    else:
+        wheel_access = "✅ <b>Звёздное Колесо доступно</b>"
+
+    if state["level"]["next_target"]:
+        left = max(0, state["level"]["next_target"] - state["ref_count"])
+        progress_text = (
+            f"📈 До уровня <b>{state['level']['next_name']}</b>: "
+            f"<b>{state['ref_count']}/{state['level']['next_target']}</b> "
+            f"(осталось {left})\n"
+        )
+    else:
+        progress_text = "👑 У вас максимальный уровень\n"
+
+    return (
+        f"👋 <b>Привет, {first_name}!</b>\n\n"
+        f"🌠 <b>Добро пожаловать в Звёздное Колесо</b>\n\n"
+        f"{activation_text}"
+        f"{wheel_access}\n\n"
+        f"⭐ <b>Ваш баланс:</b> {state['stars']}\n"
+        f"🏅 <b>Ваш уровень:</b> {state['level']['emoji']} {state['level']['name']}\n"
+        f"🎯 <b>Бонус к выигрышу:</b> +{state['level']['bonus_percent']}%\n\n"
+        f"📈 <b>Как быстрее расти в боте:</b>\n"
+        f"• Колесо даёт базовый заработок\n"
+        f"• Основной прирост звёзд идёт через активных друзей\n"
+        f"• Чем больше активных друзей — тем выше ваш уровень\n"
+        f"• Чем выше уровень — тем больше выигрыш с каждого вращения\n\n"
+        f"👥 <b>Активные друзья:</b> {state['ref_count']}\n"
+        f"{progress_text}\n"
+        f"💎 <b>Самый сильный прирост даёт уровень Diamond</b> — "
+        f"там максимальный бонус к выигрышу.\n\n"
+        f"📌 <b>Активные спонсоры:</b>\n{state['channels_list']}"
+    )
+
+
 async def process_weekly_hold_bonus(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     main_sponsors = await get_active_sponsors(include_temp=False)
 
@@ -993,6 +1094,84 @@ async def process_weekly_hold_bonus(user_id: int, context: ContextTypes.DEFAULT_
             conn.commit()
 
     return True, f"Начислено {WEEKLY_HOLD_BONUS} ⭐"
+
+
+async def show_profile(query_or_update, user_id: int, first_name: str, context: ContextTypes.DEFAULT_TYPE, edit=False):
+    decay_result = await apply_inactivity_decay(user_id, context)
+    state = await get_user_state(user_id, context)
+    me = query_or_update.from_user if hasattr(query_or_update, "from_user") else query_or_update.effective_user
+
+    reflink = f"https://t.me/{BOT_USERNAME_FOR_REFLINK}?start={user_id}"
+
+    ref_count = state["ref_count"]
+    level_name = state["level"]["name"]
+    bonus_percent = state["level"]["bonus_percent"]
+
+    if level_name == "Bronze":
+        refs_range = "0–4 друга"
+        next_hint = f"📈 До Silver осталось: <b>{max(0, 5 - ref_count)}</b>"
+        benefit_hint = "На Silver шанс выигрыша уже выше благодаря бонусу <b>+15%</b>."
+    elif level_name == "Silver":
+        refs_range = "5–9 друзей"
+        next_hint = f"📈 До Gold осталось: <b>{max(0, 10 - ref_count)}</b>"
+        benefit_hint = "На Gold шанс выигрыша становится ещё лучше: бонус <b>+35%</b>."
+    elif level_name == "Gold":
+        refs_range = "10–14 друзей"
+        next_hint = f"📈 До Diamond осталось: <b>{max(0, 15 - ref_count)}</b>"
+        benefit_hint = "💎 На Diamond шанс выигрыша заметно выше: максимальный бонус <b>+60%</b>."
+    else:
+        refs_range = "15+ друзей"
+        next_hint = "👑 У вас максимальный уровень."
+        benefit_hint = "💎 На Diamond у вас максимальный бонус к выигрышу — <b>+60%</b>."
+
+    text = (
+        f"👤 <b>Профиль</b>\n\n"
+        f"Имя: <b>{first_name}</b>\n"
+        f"Username: <b>{display_username(me.username)}</b>\n"
+        f"ID: <code>{user_id}</code>\n\n"
+        f"⭐ Баланс: <b>{state['stars']}</b>\n"
+        f"🏅 Уровень: <b>{state['level']['emoji']} {level_name}</b>\n"
+        f"👥 Диапазон уровня: <b>{refs_range}</b>\n"
+        f"🎯 Бонус к выигрышу: <b>+{bonus_percent}%</b>\n"
+        f"{next_hint}\n"
+        f"{benefit_hint}\n\n"
+        f"🎁 Недельных бонусов получено: <b>{state['weekly_hold_bonus_count']}/{MAX_WEEKLY_HOLD_BONUSES}</b>\n\n"
+        f"👥 Активные друзья: <b>{ref_count}</b>\n"
+        f"🔗 Ваша ссылка для приглашения друзей:\n<code>{reflink}</code>"
+    )
+
+    if decay_result.get("decayed", 0) > 0:
+        text += (
+            f"\n\n⚠️ <b>За период неактивности было списано:</b> {decay_result['decayed']}⭐\n"
+            f"Чтобы сохранять баланс, заходите в бот хотя бы 1 раз в 7 дней."
+        )
+
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]])
+
+    if edit:
+        await query_or_update.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    else:
+        await query_or_update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+
+async def faq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    selected_key = None
+    if query.data.startswith("faq:"):
+        selected_key = query.data.split(":", 1)[1]
+
+    try:
+        await query.edit_message_text(
+            build_faq_text(selected_key),
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_faq_keyboard(),
+        )
+    except Exception as e:
+        if "not modified" in str(e).lower():
+            pass
+        else:
+            raise e
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1749,6 +1928,231 @@ async def resume_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("▶️ <b>БОТ АКТИВЕН</b>", parse_mode=ParseMode.HTML)
 
 
+
+def make_progress_bar(current, target, length=10):
+    if target <= 0:
+        return "🟩" * length
+    filled = max(0, min(int((current / target) * length), length))
+    empty = length - filled
+    return "🟩" * filled + "⬜" * empty
+
+
+def get_level_progress_data(ref_count: int):
+    level = get_level_info(ref_count)
+
+    if level["name"] == "Bronze":
+        base = 0
+        target = 5
+        current_in_level = ref_count
+    elif level["name"] == "Silver":
+        base = 5
+        target = 10
+        current_in_level = ref_count - base
+    elif level["name"] == "Gold":
+        base = 10
+        target = 15
+        current_in_level = ref_count - base
+    else:
+        return {
+            "level": level,
+            "progress_label": "📈 <b>Максимальный уровень достигнут</b>",
+            "progress_bar": "🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩",
+            "remaining_text": "",
+        }
+
+    step_target = target - base
+    progress_bar = make_progress_bar(current_in_level, step_target, length=10)
+    left = max(0, target - ref_count)
+
+    return {
+        "level": level,
+        "progress_label": (
+            f"📈 <b>До уровня {level['next_name']}</b>: "
+            f"<b>{ref_count}/{target}</b>"
+        ),
+        "progress_bar": progress_bar,
+        "remaining_text": f"(осталось {left})",
+    }
+
+
+def get_faq_keyboard(open_key=None):
+    items = [
+        ("start", "🔰 Начало работы"),
+        ("wheel", "🌠 Звёздное Колесо"),
+        ("levels", "🏅 Уровни и бонусы"),
+        ("weekly", "🎁 Еженедельный бонус"),
+        ("exchange", "💱 Обмен звёзд"),
+        ("sponsors", "📢 Спонсорская программа"),
+        ("profile", "👤 Профиль"),
+        ("problems", "❓ Частые проблемы"),
+    ]
+
+    keyboard = []
+    for key, title in items:
+        prefix = "▼ " if key == open_key else "▶ "
+        keyboard.append([InlineKeyboardButton(f"{prefix}{title}", callback_data=f"faq:{key}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_faq_text(selected_key=None):
+    ordered_keys = [
+        "start",
+        "wheel",
+        "levels",
+        "weekly",
+        "exchange",
+        "sponsors",
+        "profile",
+        "problems",
+    ]
+
+    text = "❓ <b>Помощь</b>\n\nНажмите на интересующий раздел:\n"
+
+    for key in ordered_keys:
+        item = FAQ_ITEMS[key]
+        if key == selected_key:
+            text += f"\n▼ <b>{item['title']}</b>\n\n{item['text']}\n"
+        else:
+            text += f"\n▶ {item['title']}"
+
+    return text
+
+
+def get_reply_menu(user_id: int, bonus_percent: int = 0):
+    return ReplyKeyboardMarkup(
+        [
+            [
+                KeyboardButton(
+                    f"🌠 Звёздное Колесо (+{bonus_percent}% к выигрышу)",
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}?user_id={user_id}"),
+                ),
+            ],
+            [
+                KeyboardButton("👤 Профиль"),
+                KeyboardButton("🔄 Обмен звёзд"),
+            ],
+            [
+                KeyboardButton("🏆 Лидерборд"),
+                KeyboardButton("❓ Помощь"),
+            ],
+        ],
+        resize_keyboard=True,
+    )
+
+
+async def get_start_text(user_id, first_name, context):
+    state = await get_user_state(user_id, context)
+    progress = get_level_progress_data(state["ref_count"])
+    reflink = f"https://t.me/{BOT_USERNAME_FOR_REFLINK}?start={user_id}"
+
+    activation_text = (
+        "✅ <b>Доступ к колесу активирован</b>"
+        if state["activated"]
+        else "⚠️ <b>Для открытия колеса пригласите 2 активных друга</b>"
+    )
+
+    if not state["all_subs_ok"]:
+        wheel_access = "❌ <b>Звёздное Колесо недоступно: подпишитесь на всех активных спонсоров</b>"
+    elif not state["activated"]:
+        wheel_access = "❌ <b>Звёздное Колесо недоступно: не хватает 2 активных друзей</b>"
+    else:
+        wheel_access = "✅ <b>Звёздное Колесо доступно</b>"
+
+    return (
+        f"👋 <b>Привет, {first_name}!</b>\n\n"
+        f"Крути <b>Звёздное Колесо</b> — выигрывай звёзды ⭐\n"
+        f"Звёзды меняй на призы: Premium, вывод, продвижение канала!\n\n"
+        f"🚀 <b>Как начать за 3 шага:</b>\n"
+        f"1️⃣ Подпишись на каналы спонсоров ✅\n"
+        f"2️⃣ Пригласи 2 друзей по своей ссылке\n"
+        f"3️⃣ Крути колесо и забирай звёзды!\n\n"
+        f"💡 <b>Бесплатное вращение</b> — раз в 6 часов.\n"
+        f"Хочешь чаще? Трать звёзды на спины — {EXTRA_SPIN_COST}⭐ за спин\n"
+        f"Начисление каждую неделю по {WEEKLY_HOLD_BONUS}⭐ "
+        f"(если не отписались от спонсоров)\n\n"
+        f"📌 <b>Активные спонсоры:</b>\n{state['channels_list']}\n"
+        f"👥 <b>Активные друзья:</b> {state['ref_count']}\n"
+        f"🔗 <b>Ваша ссылка для приглашения друзей:</b>\n"
+        f"<code>{reflink}</code>\n\n"
+        f"🏅 <b>Уровень:</b> {state['level']['emoji']} {state['level']['name']}\n"
+        f"{progress['progress_label']}\n"
+        f"{progress['progress_bar']} {progress['remaining_text']}\n"
+        f"✨ <b>Бонус:</b> +{state['level']['bonus_percent']}% к выигрышу\n\n"
+        f"{activation_text}\n"
+        f"{wheel_access}"
+    )
+
+
+async def show_profile(query_or_update, user_id: int, first_name: str, context: ContextTypes.DEFAULT_TYPE, edit=False):
+    decay_result = await apply_inactivity_decay(user_id, context)
+    state = await get_user_state(user_id, context)
+    me = query_or_update.from_user if hasattr(query_or_update, "from_user") else query_or_update.effective_user
+    reflink = f"https://t.me/{BOT_USERNAME_FOR_REFLINK}?start={user_id}"
+    progress = get_level_progress_data(state["ref_count"])
+
+    text = (
+        f"👤 <b>Профиль</b>\n\n"
+        f"Имя: <b>{first_name}</b>\n"
+        f"Username: <b>{display_username(me.username)}</b>\n"
+        f"ID: <code>{user_id}</code>\n\n"
+        f"⭐ <b>Баланс:</b> {state['stars']}\n"
+        f"🎁 <b>Недельных бонусов получено:</b> "
+        f"{state['weekly_hold_bonus_count']}/{MAX_WEEKLY_HOLD_BONUSES}\n\n"
+        f"👥 <b>Активные друзья:</b> {state['ref_count']}\n"
+        f"🔗 <b>Ваша ссылка для приглашения друзей:</b>\n"
+        f"<code>{reflink}</code>\n\n"
+        f"🏅 <b>Уровень:</b> {state['level']['emoji']} {state['level']['name']}\n"
+        f"{progress['progress_label']}\n"
+        f"{progress['progress_bar']} {progress['remaining_text']}\n"
+        f"✨ <b>Бонус:</b> +{state['level']['bonus_percent']}% к выигрышу"
+    )
+
+    if decay_result.get("decayed", 0) > 0:
+        text += (
+            f"\n\n⚠️ <b>За период неактивности было списано:</b> {decay_result['decayed']}⭐\n"
+            f"Чтобы сохранять баланс, заходите в бот хотя бы 1 раз в 7 дней."
+        )
+
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]])
+
+    if edit:
+        await query_or_update.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    else:
+        await query_or_update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+
+
+async def faq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    selected_key = None
+    if query.data.startswith("faq:"):
+        clicked_key = query.data.split(":", 1)[1]
+        current_open_key = context.user_data.get("faq_open_key")
+
+        if current_open_key == clicked_key:
+            context.user_data["faq_open_key"] = None
+            selected_key = None
+        else:
+            context.user_data["faq_open_key"] = clicked_key
+            selected_key = clicked_key
+
+    try:
+        await query.edit_message_text(
+            build_faq_text(selected_key),
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_faq_keyboard(selected_key),
+        )
+    except Exception as e:
+        if "not modified" in str(e).lower():
+            pass
+        else:
+            raise e
+
+
+
 def make_progress_bar(current, target, length=10):
     if target <= 0:
         return "🟩" * length
@@ -1957,6 +2361,7 @@ async def faq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         else:
             raise e
+
 
 
 async def reset_weekly_hold_bonuses_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
