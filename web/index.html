@@ -148,6 +148,7 @@
   <div class="wrap">
     <div class="info-card">
       <div class="info-line" id="starsLine">⭐ Баланс: —</div>
+      <div class="info-line" id="paidSpinsLine">⚡ Буст-спины: 0</div>
       <div class="info-line" id="levelLine">🏅 Уровень: —</div>
       <div class="info-line" id="wheelBonusLine">🌠 Звёздное Колесо: —</div>
       <div class="info-line" id="statusLine">🔄 Статус: проверка...</div>
@@ -162,7 +163,7 @@
     <button id="spinBtn" class="spin-btn">КРУТИТЬ ЗВЁЗДНОЕ КОЛЕСО</button>
 
     <div class="status-box" id="statusBox">Проверяем доступ...</div>
-    <div class="small">Бесплатно раз в 6 часов или сразу за 1⭐</div>
+    <div class="small">Бесплатно раз в 6 часов или сразу за 2⭐</div>
   </div>
 
   <script>
@@ -178,6 +179,7 @@
     const spinBtn = document.getElementById("spinBtn");
 
     const starsLine = document.getElementById("starsLine");
+    const paidSpinsLine = document.getElementById("paidSpinsLine");
     const levelLine = document.getElementById("levelLine");
     const wheelBonusLine = document.getElementById("wheelBonusLine");
     const statusLine = document.getElementById("statusLine");
@@ -276,8 +278,15 @@
       const meta = levelMeta[level] || levelMeta.Bronze;
 
       starsLine.textContent = `⭐ Баланс: ${check.stars ?? "—"}`;
+      const boostSpinsLeft = check.boost_spins_left ?? 0;
+      const boostPercent = check.boost_percent ?? 0;
+      if (paidSpinsLine) {
+        paidSpinsLine.textContent = boostSpinsLeft > 0
+          ? `⚡ Временный буст: +${boostPercent}% (осталось ${boostSpinsLeft} спина)`
+          : `⚡ Временный буст: нет`;
+      }
       levelLine.textContent = `🏅 Уровень: ${meta.emoji} ${level}`;
-      wheelBonusLine.textContent = `🌠 Звёздное Колесо: ${meta.bonus}`;
+      wheelBonusLine.textContent = `🌠 Звёздное Колесо: +${(check.total_bonus_percent ?? ((check.bonus_percent ?? 0) + (check.activation_bonus_percent ?? 0) + (check.boost_percent ?? 0)))}%`;
       levelBadge.textContent = `${meta.emoji} ${level}`;
 
       if (check.can_spin) {

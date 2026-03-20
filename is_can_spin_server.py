@@ -89,15 +89,8 @@ def get_level_info(ref_count: int):
     }
 
 
-def get_wheel_weights_by_level(level_name: str):
-    multipliers = {
-        "Bronze": 1.00,
-        "Silver": 1.20,
-        "Gold": 1.45,
-        "Diamond": 1.80,
-    }
-
-    mult = multipliers.get(level_name, 1.00)
+def get_wheel_weights_by_bonus(total_bonus_percent: int):
+    mult = 1.0 + (float(total_bonus_percent) / 100.0)
 
     boosted = {}
     boosted_sum = 0.0
@@ -160,7 +153,8 @@ def get_user_state(cur, user_id: int):
             COALESCE(active_ref_count, 0),
             COALESCE(activation_bonus_percent, 0),
             COALESCE(boost_percent, 0),
-            COALESCE(boost_spins_left, 0)
+            COALESCE(boost_spins_left, 0),
+            COALESCE(paid_spins, 0)
         FROM users
         WHERE user_id = %s
         """,
@@ -179,6 +173,7 @@ def get_user_state(cur, user_id: int):
         activation_bonus_percent,
         boost_percent,
         boost_spins_left,
+        paid_spins,
     ) = row
     return {
         "stars": int(stars or 0),
@@ -189,6 +184,7 @@ def get_user_state(cur, user_id: int):
         "activation_bonus_percent": int(activation_bonus_percent or 0),
         "boost_percent": int(boost_percent or 0),
         "boost_spins_left": int(boost_spins_left or 0),
+        "paid_spins": int(paid_spins or 0),
     }
 
 
@@ -212,7 +208,7 @@ def is_can_spin():
 
             level = get_level_info(state["ref_count"])
             total_bonus_percent = int(state.get("activation_bonus_percent", 0)) + int(level["bonus_percent"]) + int(state.get("boost_percent", 0))
-            weights = get_wheel_weights_by_level(level["name"])
+            weights = get_wheel_weights_by_bonus(total_bonus_percent)
 
             if not main_sponsors:
                 return jsonify(
@@ -230,6 +226,7 @@ def is_can_spin():
                         "activation_bonus_percent": state.get("activation_bonus_percent", 0),
                         "boost_percent": state.get("boost_percent", 0),
                         "boost_spins_left": state.get("boost_spins_left", 0),
+                        "paid_spins": state.get("paid_spins", 0),
                         "total_bonus_percent": total_bonus_percent,
                         "weights": weights,
                     }
@@ -252,6 +249,7 @@ def is_can_spin():
                         "activation_bonus_percent": state.get("activation_bonus_percent", 0),
                         "boost_percent": state.get("boost_percent", 0),
                         "boost_spins_left": state.get("boost_spins_left", 0),
+                        "paid_spins": state.get("paid_spins", 0),
                         "total_bonus_percent": total_bonus_percent,
                         "weights": weights,
                     }
@@ -273,6 +271,7 @@ def is_can_spin():
                         "activation_bonus_percent": state.get("activation_bonus_percent", 0),
                         "boost_percent": state.get("boost_percent", 0),
                         "boost_spins_left": state.get("boost_spins_left", 0),
+                        "paid_spins": state.get("paid_spins", 0),
                         "total_bonus_percent": total_bonus_percent,
                         "weights": weights,
                     }
@@ -288,6 +287,8 @@ def is_can_spin():
                         "can_buy_spin": state["stars"] >= SPIN_COST_STARS,
                         "spin_cost": SPIN_COST_STARS,
                         "stars": state["stars"],
+                        "paid_spins": state.get("paid_spins", 0),
+                        "paid_spins": state.get("paid_spins", 0),
                         "wait_seconds": 0,
                         "wait_msg": "",
                         "reason": None,
@@ -298,6 +299,7 @@ def is_can_spin():
                         "activation_bonus_percent": state.get("activation_bonus_percent", 0),
                         "boost_percent": state.get("boost_percent", 0),
                         "boost_spins_left": state.get("boost_spins_left", 0),
+                        "paid_spins": state.get("paid_spins", 0),
                         "total_bonus_percent": total_bonus_percent,
                         "weights": weights,
                     }
@@ -312,6 +314,8 @@ def is_can_spin():
                         "can_buy_spin": state["stars"] >= SPIN_COST_STARS,
                         "spin_cost": SPIN_COST_STARS,
                         "stars": state["stars"],
+                        "paid_spins": state.get("paid_spins", 0),
+                        "paid_spins": state.get("paid_spins", 0),
                         "wait_seconds": 0,
                         "wait_msg": "",
                         "reason": None,
@@ -322,6 +326,7 @@ def is_can_spin():
                         "activation_bonus_percent": state.get("activation_bonus_percent", 0),
                         "boost_percent": state.get("boost_percent", 0),
                         "boost_spins_left": state.get("boost_spins_left", 0),
+                        "paid_spins": state.get("paid_spins", 0),
                         "total_bonus_percent": total_bonus_percent,
                         "weights": weights,
                     }
@@ -335,10 +340,11 @@ def is_can_spin():
             return jsonify(
                 {
                     "ok": True,
-                    "can_spin": False,
+                    "can_spin": state.get("paid_spins", 0) > 0,
                     "can_buy_spin": state["stars"] >= SPIN_COST_STARS,
                     "spin_cost": SPIN_COST_STARS,
                     "stars": state["stars"],
+                    "paid_spins": state.get("paid_spins", 0),
                     "wait_seconds": wait_seconds,
                     "wait_msg": f"Подождите {hours}ч {minutes}м до следующего бесплатного вращения.",
                     "reason": "cooldown",
@@ -346,10 +352,10 @@ def is_can_spin():
                     "level": level["name"],
                     "level_emoji": level["emoji"],
                     "bonus_percent": level["bonus_percent"],
-                        "activation_bonus_percent": state.get("activation_bonus_percent", 0),
-                        "boost_percent": state.get("boost_percent", 0),
-                        "boost_spins_left": state.get("boost_spins_left", 0),
-                        "total_bonus_percent": total_bonus_percent,
+                    "activation_bonus_percent": state.get("activation_bonus_percent", 0),
+                    "boost_percent": state.get("boost_percent", 0),
+                    "boost_spins_left": state.get("boost_spins_left", 0),
+                    "total_bonus_percent": total_bonus_percent,
                     "weights": weights,
                 }
             )
@@ -438,19 +444,19 @@ def buy_spin():
                     }
                 )
 
-            new_last_time = now - cooldown
-
             cur.execute(
                 """
                 UPDATE users
                 SET tickets = tickets - %s,
-                    last_fortune_time = %s
+                    paid_spins = COALESCE(paid_spins, 0) + 1
                 WHERE user_id = %s
-                RETURNING tickets
+                RETURNING tickets, paid_spins
                 """,
-                (SPIN_COST_STARS, new_last_time, user_id),
+                (SPIN_COST_STARS, user_id),
             )
-            new_stars = cur.fetchone()[0]
+            row = cur.fetchone()
+            new_stars = row[0]
+            new_paid_spins = row[1]
             conn.commit()
 
             return jsonify(
@@ -458,6 +464,7 @@ def buy_spin():
                     "ok": True,
                     "success": True,
                     "stars": int(new_stars or 0),
+                    "paid_spins": int(new_paid_spins or 0),
                     "spin_cost": SPIN_COST_STARS,
                     "message": "Дополнительный спин успешно куплен.",
                 }
@@ -513,21 +520,27 @@ def spin():
                 ), 200
 
             last_time = state["last_time"]
-            can_spin = (last_time is None) or ((now - last_time) >= cooldown)
-            if not can_spin:
-                remaining = cooldown - (now - last_time)
-                wait_seconds = max(0, int(remaining.total_seconds()))
-                return jsonify(
-                    {
-                        "ok": False,
-                        "error": "cooldown",
-                        "wait_seconds": wait_seconds,
-                    }
-                ), 200
+            free_spin_ready = (last_time is None) or ((now - last_time) >= cooldown)
+            use_paid_spin = False
+
+            if not free_spin_ready:
+                if state.get("paid_spins", 0) > 0:
+                    use_paid_spin = True
+                else:
+                    remaining = cooldown - (now - last_time)
+                    wait_seconds = max(0, int(remaining.total_seconds()))
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": "cooldown",
+                            "wait_seconds": wait_seconds,
+                            "paid_spins": state.get("paid_spins", 0),
+                        }
+                    ), 200
 
             level = get_level_info(state["ref_count"])
             total_bonus_percent = int(state.get("activation_bonus_percent", 0)) + int(level["bonus_percent"]) + int(state.get("boost_percent", 0))
-            weights_dict = get_wheel_weights_by_level(level["name"])
+            weights_dict = get_wheel_weights_by_bonus(total_bonus_percent)
 
             codes = ["nothing", "star_1", "star_2", "star_3", "star_4", "star_5"]
             weights = [
@@ -541,7 +554,7 @@ def spin():
 
             prize_code = random.choices(codes, weights=weights, k=1)[0]
             base_stars = PRIZE_TO_STARS.get(prize_code, 0)
-            add_stars = int(round(base_stars * (1 + total_bonus_percent / 100.0))) if base_stars > 0 else 0
+            add_stars = base_stars
             spin_id = str(uuid.uuid4())
 
             cur.execute(
@@ -561,33 +574,62 @@ def spin():
                     new_boost_spins_left = 0
                     new_boost_percent = 0
 
-            if add_stars > 0:
-                cur.execute(
-                    """
-                    UPDATE users
-                    SET tickets = COALESCE(tickets, 0) + %s,
-                        last_fortune_time = %s,
-                        boost_percent = %s,
-                        boost_spins_left = %s
-                    WHERE user_id = %s
-                    RETURNING tickets
-                    """,
-                    (add_stars, now, new_boost_percent, new_boost_spins_left, user_id),
-                )
+            if use_paid_spin:
+                if add_stars > 0:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET tickets = COALESCE(tickets, 0) + %s,
+                            paid_spins = COALESCE(paid_spins, 0) - 1,
+                            boost_percent = %s,
+                            boost_spins_left = %s
+                        WHERE user_id = %s
+                        RETURNING tickets, paid_spins
+                        """,
+                        (add_stars, new_boost_percent, new_boost_spins_left, user_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET paid_spins = COALESCE(paid_spins, 0) - 1,
+                            boost_percent = %s,
+                            boost_spins_left = %s
+                        WHERE user_id = %s
+                        RETURNING tickets, paid_spins
+                        """,
+                        (new_boost_percent, new_boost_spins_left, user_id),
+                    )
             else:
-                cur.execute(
-                    """
-                    UPDATE users
-                    SET last_fortune_time = %s,
-                        boost_percent = %s,
-                        boost_spins_left = %s
-                    WHERE user_id = %s
-                    RETURNING tickets
-                    """,
-                    (now, new_boost_percent, new_boost_spins_left, user_id),
-                )
+                if add_stars > 0:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET tickets = COALESCE(tickets, 0) + %s,
+                            last_fortune_time = %s,
+                            boost_percent = %s,
+                            boost_spins_left = %s
+                        WHERE user_id = %s
+                        RETURNING tickets, paid_spins
+                        """,
+                        (add_stars, now, new_boost_percent, new_boost_spins_left, user_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET last_fortune_time = %s,
+                            boost_percent = %s,
+                            boost_spins_left = %s
+                        WHERE user_id = %s
+                        RETURNING tickets, paid_spins
+                        """,
+                        (now, new_boost_percent, new_boost_spins_left, user_id),
+                    )
 
-            new_stars = cur.fetchone()[0]
+            row = cur.fetchone()
+            new_stars = row[0]
+            new_paid_spins = row[1]
             conn.commit()
 
     return jsonify(
@@ -604,6 +646,7 @@ def spin():
             "activation_bonus_percent": state.get("activation_bonus_percent", 0),
             "boost_percent": new_boost_percent,
             "boost_spins_left": new_boost_spins_left,
+            "paid_spins": int(new_paid_spins or 0),
             "total_bonus_percent": total_bonus_percent,
             "weights": weights_dict,
         }
