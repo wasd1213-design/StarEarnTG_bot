@@ -34,25 +34,25 @@ WEBAPP_URL = os.getenv("WEBAPP_URL")
 
 IS_ACTIVE = True
 
-START_BONUS = 20
-WEEKLY_HOLD_BONUS = 20
+START_BONUS = 5
+WEEKLY_HOLD_BONUS = 5
 MAX_WEEKLY_HOLD_BONUSES = 4
 EXTRA_SPIN_COST = 2
 
-PREMIUM_COST = 1300
+PREMIUM_COST = 1000
 WITHDRAW_MIN = 700
 CHANNEL_PROMO_COST = 200
-CHANNEL_PROMO_PRIORITY_COST = 250
+CHANNEL_PROMO_PRIORITY_COST = 300
 
-BOOST_10_COST = 25
+BOOST_10_COST = 20
 BOOST_10_PERCENT = 10
 BOOST_10_SPINS = 5
 
-BOOST_20_COST = 60
+BOOST_20_COST = 50
 BOOST_20_PERCENT = 20
 BOOST_20_SPINS = 10
 
-BOOST_35_COST = 140
+BOOST_35_COST = 110
 BOOST_35_PERCENT = 35
 BOOST_35_SPINS = 20
 
@@ -96,21 +96,21 @@ FAQ_ITEMS = {
             "❓ <b>Как работают уровни?</b>\n\n"
             "🥉 <b>Bronze</b>\n"
             "• 0–4 активных друга\n"
-            "• Бонус уровня: +0%\n"
-            "• После активации Колеса дополнительно даётся +5%\n\n"
+            "• Бонус к Звёздному Колесу: +0%\n"
+            "• После активации Колеса дополнительно даётся +5% к шансу выпадения звёздных секторов\n\n"
             "🥈 <b>Silver</b>\n"
             "• 5–9 активных друзей\n"
-            "• Бонус уровня: +20%\n"
-            "• Итого с бонусом активации: +25%\n\n"
+            "• Бонус к Звёздному Колесу: +20%\n"
+            "• Итого с бонусом активации: +25% к шансу выпадения звёздных секторов\n\n"
             "🥇 <b>Gold</b>\n"
             "• 10–14 активных друзей\n"
-            "• Бонус уровня: +45%\n"
-            "• Итого с бонусом активации: +50%\n\n"
+            "• Бонус к Звёздному Колесу: +45%\n"
+            "• Итого с бонусом активации: +50% к шансу выпадения звёздных секторов\n\n"
             "💎 <b>Diamond</b>\n"
             "• 15+ активных друзей\n"
-            "• Бонус уровня: +80%\n"
-            "• Итого с бонусом активации: +85%\n\n"
-            "⚡ Если у вас активен временный буст, он добавляется сверху."
+            "• Бонус к Звёздному Колесу: +80%\n"
+            "• Итого с бонусом активации: +85% к шансу выпадения звёздных секторов\n\n"
+            "⚡ Если у вас активно усиление, оно дополнительно повышает шанс выпадения звёздных секторов."
         ),
     },
     "weekly": {
@@ -134,14 +134,14 @@ FAQ_ITEMS = {
             f"• Telegram Premium (3 мес) — {PREMIUM_COST} ⭐\n"
             f"• Вывод звёзд — от {WITHDRAW_MIN} ⭐\n"
             f"• Канал в списке спонсоров — {CHANNEL_PROMO_COST} ⭐\n"
-            f"• Вне очереди — {CHANNEL_PROMO_PRIORITY_COST} ⭐\n"
-            f"• Буст +{BOOST_10_PERCENT}% на {BOOST_10_SPINS} спинов — {BOOST_10_COST} ⭐\n"
-            f"• Буст +{BOOST_20_PERCENT}% на {BOOST_20_SPINS} спинов — {BOOST_20_COST} ⭐\n"
-            f"• Буст +{BOOST_35_PERCENT}% на {BOOST_35_SPINS} спинов — {BOOST_35_COST} ⭐\n\n"
+            f"• Ваш канал в списке вне очереди — {CHANNEL_PROMO_PRIORITY_COST} ⭐\n"
+            f"• Усиление Колеса +{BOOST_10_PERCENT}% на {BOOST_10_SPINS} вращений — {BOOST_10_COST} ⭐\n"
+            f"• Усиление Колеса +{BOOST_20_PERCENT}% на {BOOST_20_SPINS} вращений — {BOOST_20_COST} ⭐\n"
+            f"• Усиление Колеса +{BOOST_35_PERCENT}% на {BOOST_35_SPINS} вращений — {BOOST_35_COST} ⭐\n\n"
             "❓ <b>Что важно знать?</b>\n"
             "• Для вывода и Telegram Premium нужен Diamond-уровень\n"
             "• Для обмена на балансе должно хватать звёзд\n"
-            "• Пока один буст активен, новый купить нельзя"
+            "• Пока одно усиление активно, новое купить нельзя"
         ),
     },
     "sponsors": {
@@ -285,7 +285,14 @@ def get_level_info(ref_count: int):
     }
 
 
-def get_main_inline():
+def get_main_inline(activated: bool):
+    if not activated:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 Подписаться на спонсоров", callback_data="show_sponsors")],
+            [InlineKeyboardButton("📨 Моя ссылка", callback_data="show_invite")],
+            [InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")],
+        ])
+
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")]
     ])
@@ -295,12 +302,12 @@ def get_exchange_inline():
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton(f"💎 Telegram Premium 3 мес — {PREMIUM_COST} ⭐", callback_data="exchange_premium")],
-            [InlineKeyboardButton("💸 Вывод звёзд", callback_data="exchange_withdraw")],
+            [InlineKeyboardButton(f"💸 Вывод звёзд — от {WITHDRAW_MIN} ⭐", callback_data="exchange_withdraw")],
             [InlineKeyboardButton(f"📢 Ваш канал в списке спонсоров — {CHANNEL_PROMO_COST} ⭐", callback_data="exchange_promo")],
-            [InlineKeyboardButton(f"⚡ Вне очереди — {CHANNEL_PROMO_PRIORITY_COST} ⭐", callback_data="exchange_promo_priority")],
-            [InlineKeyboardButton(f"⚡ Буст +{BOOST_10_PERCENT}% на {BOOST_10_SPINS} спинов — {BOOST_10_COST} ⭐", callback_data="exchange_boost_10")],
-            [InlineKeyboardButton(f"⚡ Буст +{BOOST_20_PERCENT}% на {BOOST_20_SPINS} спинов — {BOOST_20_COST} ⭐", callback_data="exchange_boost_20")],
-            [InlineKeyboardButton(f"⚡ Буст +{BOOST_35_PERCENT}% на {BOOST_35_SPINS} спинов — {BOOST_35_COST} ⭐", callback_data="exchange_boost_35")],
+            [InlineKeyboardButton(f"📢 Ваш канал в списке вне очереди — {CHANNEL_PROMO_PRIORITY_COST} ⭐", callback_data="exchange_promo_priority")],
+            [InlineKeyboardButton(f"🌠 Усиление Колеса +{BOOST_10_PERCENT}% на {BOOST_10_SPINS} вращений — {BOOST_10_COST} ⭐", callback_data="exchange_boost_10")],
+            [InlineKeyboardButton(f"🌠 Усиление Колеса +{BOOST_20_PERCENT}% на {BOOST_20_SPINS} вращений — {BOOST_20_COST} ⭐", callback_data="exchange_boost_20")],
+            [InlineKeyboardButton(f"🌠 Усиление Колеса +{BOOST_35_PERCENT}% на {BOOST_35_SPINS} вращений — {BOOST_35_COST} ⭐", callback_data="exchange_boost_35")],
             [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")],
         ]
     )
@@ -434,6 +441,7 @@ def init_db():
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS activation_bonus_percent INT DEFAULT 0",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS boost_percent INT DEFAULT 0",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS boost_spins_left INT DEFAULT 0",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS activation_reward_paid BOOLEAN DEFAULT FALSE",
                     "ALTER TABLE referrals ADD COLUMN IF NOT EXISTS inactive_since TIMESTAMP NULL",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMP NULL",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS lifetime_ref_count INT DEFAULT 0",
@@ -798,22 +806,58 @@ async def count_valid_refs(referrer_id: int, context: ContextTypes.DEFAULT_TYPE)
                 (active_count, referrer_id),
             )
 
-            cur.execute(
-                """
-                UPDATE users
-                SET activated = TRUE,
-                    activation_bonus_percent = CASE
-                        WHEN COALESCE(activation_bonus_percent, 0) < 5 THEN 5
-                        ELSE activation_bonus_percent
-                    END
-                WHERE user_id = %s
-                  AND COALESCE(activated, FALSE) = FALSE
-                  AND %s >= 2
-                """,
-                (referrer_id, active_count),
-            )
+            activation_reward_granted = False
+
+            if active_count >= 2:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET activated = TRUE,
+                        activation_bonus_percent = CASE
+                            WHEN COALESCE(activation_bonus_percent, 0) < 5 THEN 5
+                            ELSE activation_bonus_percent
+                        END,
+                        tickets = CASE
+                            WHEN COALESCE(activated, FALSE) = FALSE
+                             AND COALESCE(activation_reward_paid, FALSE) = FALSE
+                            THEN COALESCE(tickets, 0) + 10
+                            ELSE COALESCE(tickets, 0)
+                        END,
+                        activation_reward_paid = CASE
+                            WHEN COALESCE(activated, FALSE) = FALSE
+                             AND COALESCE(activation_reward_paid, FALSE) = FALSE
+                            THEN TRUE
+                            ELSE COALESCE(activation_reward_paid, FALSE)
+                        END
+                    WHERE user_id = %s
+                    RETURNING
+                        CASE
+                            WHEN COALESCE(activated, FALSE) = FALSE
+                             AND COALESCE(activation_reward_paid, FALSE) = FALSE
+                            THEN TRUE
+                            ELSE FALSE
+                        END
+                    """,
+                    (referrer_id,),
+                )
+                activation_row = cur.fetchone()
+                activation_reward_granted = bool(activation_row[0]) if activation_row else False
 
             conn.commit()
+
+    if active_count >= 2 and activation_reward_granted:
+        try:
+            await context.bot.send_message(
+                chat_id=referrer_id,
+                text=(
+                    "🎉 <b>Поздравляем!</b>\n\n"
+                    "Вы выполнили условие активации Звёздного Колеса и получили <b>+10⭐</b>\n"
+                    "Теперь вам доступно бесплатное вращение каждые 6 часов."
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            print("activation reward notify error:", e)
 
     return active_count
 
@@ -952,7 +996,8 @@ async def notify_level_up_if_needed(user_id: int, context: ContextTypes.DEFAULT_
                         text=(
                             f"🎉 <b>Поздравляем!</b>\n\n"
                             f"Ваш уровень повышен до <b>{state['level']['emoji']} {current_level}</b>\n"
-                            f"🌠 <b>Итоговый бонус к выигрышу:</b> +{state['total_bonus_percent']}%"
+                            f"🌠 <b>Бонус к Звёздному Колесу:</b> +{state['total_bonus_percent']}%\n"
+                            f"📌 <b>Этот бонус повышает шанс выпадения звёздных секторов</b>"
                         ),
                         parse_mode=ParseMode.HTML,
                     )
@@ -1146,11 +1191,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=get_main_inline(),
+        reply_markup=get_main_inline(state["activated"]),
     )
     await update.message.reply_text(
         "Выберите действие из меню ниже 👇",
-        reply_markup=get_reply_menu(user_id, state["total_bonus_percent"]),
+        reply_markup=get_reply_menu(user_id, state["activated"], state["total_bonus_percent"]),
     )
 
 
@@ -1171,7 +1216,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(
                     "⏳ <b>Идёт обновление...</b>",
                     parse_mode=ParseMode.HTML,
-                    reply_markup=get_main_inline(),
                 )
             except Exception:
                 pass
@@ -1179,6 +1223,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             decay_result = await apply_inactivity_decay(uid, context)
             await count_valid_refs(uid, context)
             await recount_temp_order_progress(context)
+
+            state = await get_user_state(uid, context)
             text = await get_start_text(uid, query.from_user.first_name, context)
 
             if decay_result.get("decayed", 0) > 0:
@@ -1191,7 +1237,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(
                     text,
                     parse_mode=ParseMode.HTML,
-                    reply_markup=get_main_inline(),
+                    reply_markup=get_main_inline(state["activated"]),
                 )
             except Exception as e:
                 if "not modified" in str(e).lower():
@@ -1202,11 +1248,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             state = await get_user_state(uid, context)
             await query.message.reply_text(
                 "Выберите действие из меню ниже 👇",
-                reply_markup=get_reply_menu(uid, state["total_bonus_percent"]),
+                reply_markup=get_reply_menu(uid, state["activated"], state["total_bonus_percent"]),
             )
 
         elif data == "profile":
             await show_profile(query, uid, query.from_user.first_name, context, edit=True)
+
+        elif data == "show_sponsors":
+            text, keyboard = await build_sponsors_text_and_keyboard(context)
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+
+        elif data == "show_invite":
+            await query.edit_message_text(
+                build_invite_text(uid),
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+                ),
+            )
 
         elif data == "exchange":
             state = await get_user_state(uid, context)
@@ -1568,6 +1631,35 @@ async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "👤 Профиль":
         await show_profile(update, uid, user.first_name or "друг", context)
+        return
+
+    if text == "🔒 Звёздное Колесо":
+        state = await get_user_state(uid, context)
+        subs_status = "✅ выполнены" if state["all_subs_ok"] else "❌ не выполнены"
+
+        await update.message.reply_text(
+            (
+                f"🔒 <b>Звёздное Колесо пока недоступно</b>\n\n"
+                f"Чтобы открыть доступ, нужно выполнить условия:\n"
+                f"• Подписки на спонсоров: <b>{subs_status}</b>\n"
+                f"• Активные друзья: <b>{state['ref_count']}/2</b>\n\n"
+                f"После выполнения условий нажмите <b>«Обновить статус»</b> на главном экране."
+            ),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if text == "🔒 Обмен звёзд":
+        await update.message.reply_text(
+            (
+                f"🔒 <b>Обмен звёзд пока недоступен</b>\n\n"
+                f"Сначала откройте Звёздное Колесо:\n"
+                f"1️⃣ Подпишитесь на всех активных спонсоров\n"
+                f"2️⃣ Пригласите 2 активных друзей\n\n"
+                f"После активации Колеса раздел обмена станет доступен."
+            ),
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     if text == "❓ Помощь":
@@ -2002,12 +2094,73 @@ def build_faq_text(selected_key=None):
 
     return text
 
-def get_reply_menu(user_id: int, bonus_percent: int = 0):
+
+async def build_sponsors_text_and_keyboard(context: ContextTypes.DEFAULT_TYPE):
+    sponsors = await get_active_sponsors(include_temp=True)
+
+    if not sponsors:
+        text = (
+            "📢 <b>Активные спонсоры</b>\n\n"
+            "Сейчас активные спонсоры не настроены."
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]
+        ])
+        return text, keyboard
+
+    lines = ["📢 <b>Подписка на спонсоров</b>\n", "Подпишитесь на все активные каналы:\n"]
+    keyboard_rows = []
+
+    for sponsor in sponsors:
+        ch = sponsor["channel_username"]
+        slot_no = sponsor["slot_no"]
+        sponsor_type = sponsor["sponsor_type"]
+
+        if sponsor_type == "main":
+            label = f"📌 Спонсор {slot_no}: {ch}"
+        else:
+            label = f"⚡ Временный спонсор: {ch}"
+
+        lines.append(f"• {label}")
+        keyboard_rows.append([
+            InlineKeyboardButton(
+                label,
+                url=f"https://t.me/{ch.lstrip('@')}"
+            )
+        ])
+
+    keyboard_rows.append([InlineKeyboardButton("🔄 Обновить статус", callback_data="check_sub")])
+    keyboard_rows.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
+
+    return "\n".join(lines), InlineKeyboardMarkup(keyboard_rows)
+
+
+def build_invite_text(user_id: int):
+    reflink = f"https://t.me/{BOT_USERNAME_FOR_REFLINK}?start={user_id}"
+    return (
+        "📨 <b>Ваша ссылка для приглашения</b>\n\n"
+        f"<code>{reflink}</code>\n\n"
+        "📌 <b>Активный друг</b> — это пользователь, который:\n"
+        "• перешёл по вашей ссылке\n"
+        "• подписался на 2 основных спонсорских канала"
+    )
+
+def get_reply_menu(user_id: int, activated: bool, bonus_percent: int = 0):
+    if not activated:
+        return ReplyKeyboardMarkup(
+            [
+                [KeyboardButton("🔒 Звёздное Колесо")],
+                [KeyboardButton("👤 Профиль"), KeyboardButton("🔒 Обмен звёзд")],
+                [KeyboardButton("🏆 Лидерборд"), KeyboardButton("❓ Помощь")],
+            ],
+            resize_keyboard=True,
+        )
+
     return ReplyKeyboardMarkup(
         [
             [
                 KeyboardButton(
-                    f"🌠 Звёздное Колесо (+{bonus_percent}% к выигрышу)",
+                    f"🌠 Звёздное Колесо (+{bonus_percent}%)",
                     web_app=WebAppInfo(url=f"{WEBAPP_URL}?user_id={user_id}"),
                 ),
             ],
@@ -2047,8 +2200,9 @@ async def get_start_text(user_id, first_name, context):
             f"• перешёл по вашей ссылке\n"
             f"• подписался на 2 основных канала\n\n"
             f"📢 <b>Активные спонсоры:</b>\n{state['channels_list']}\n"
-            f"🔗 <b>Ваша ссылка для приглашения:</b>\n"
-            f"<code>{reflink}</code>\n\n"
+            f"Используйте кнопки ниже, чтобы:\n"
+            f"• подписаться на спонсоров\n"
+            f"• получить свою ссылку для приглашения\n\n"
             f"Нажмите <b>«Обновить статус»</b> после выполнения условий 👇"
         )
 
@@ -2089,9 +2243,10 @@ async def get_start_text(user_id, first_name, context):
         f"{progress['progress_bar']} {progress['remaining_text']}\n"
         f"✨ <b>Бонус за активацию:</b> +{state['activation_bonus_percent']}%\n"
         f"🏅 <b>Бонус уровня:</b> +{state['level']['bonus_percent']}%\n"
-        f"⚡ <b>Временный буст:</b> "
+        f"🌠 <b>Активное усиление:</b> "
         f"{('+' + str(state['boost_percent']) + '% (осталось ' + str(state['boost_spins_left']) + ' спина)') if state['boost_spins_left'] > 0 else 'нет'}\n"
-        f"🌠 <b>Итоговый бонус:</b> +{state['total_bonus_percent']}% к выигрышу\n\n"
+        f"🌠 <b>Бонус к Звёздному Колесу:</b> +{state['total_bonus_percent']}%\n"
+        f"📌 <b>Этот бонус повышает шанс выпадения звёздных секторов</b>\n\n"
         f"{activation_text}\n"
         f"{wheel_access}"
     )
@@ -2120,9 +2275,10 @@ async def show_profile(query_or_update, user_id: int, first_name: str, context: 
         f"{progress['progress_bar']} {progress['remaining_text']}\n"
         f"✨ <b>Бонус за активацию:</b> +{state['activation_bonus_percent']}%\n"
         f"🏅 <b>Бонус уровня:</b> +{state['level']['bonus_percent']}%\n"
-        f"⚡ <b>Временный буст:</b> "
+        f"🌠 <b>Активное усиление:</b> "
         f"{('+' + str(state['boost_percent']) + '% (осталось ' + str(state['boost_spins_left']) + ' спина)') if state['boost_spins_left'] > 0 else 'нет'}\n"
-        f"🌠 <b>Итоговый бонус:</b> +{state['total_bonus_percent']}% к выигрышу"
+        f"🌠 <b>Бонус к Звёздному Колесу:</b> +{state['total_bonus_percent']}%\n"
+        f"📌 <b>Этот бонус повышает шанс выпадения звёздных секторов</b>"
     )
 
     if decay_result.get("decayed", 0) > 0:
